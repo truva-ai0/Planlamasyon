@@ -52,6 +52,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/parse-zoning-document"
+  to = "/.netlify/functions/parse-zoning-document"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

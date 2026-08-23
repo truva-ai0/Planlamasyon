@@ -1,13 +1,14 @@
 {
   "name": "planlamasyon-netlify",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@netlify/blobs": "^10.7.9"
+    "@netlify/blobs": "^10.7.9",
+    "unpdf": "^1.8.1"
   },
   "scripts": {
     "build": "node build.mjs"

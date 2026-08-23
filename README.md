@@ -1,43 +1,98 @@
-# Planlamasyon v3.1.4 — Resmî Ada/Parsel Plan Kayıt Motoru
+# Planlamasyon v3.1.5 — Güncel Resmî İmar Belgesi Okuma ve Analiz Motoru
 
-Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.4, çalışan TKGM parsel/harita motoru ve gömülü belediye kataloğunun üzerine, kamuya açık resmî plan ve askı kayıtlarını **ada–parsel bazında eşleştiren** yeni bir veri katmanı ekler.
+Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.5, çalışan TKGM parsel/harita motoru, 117 bağlantılı resmî belediye kataloğu ve ada–parsel plan kayıt motorunun üzerine **güncel resmî imar belgesini okuyup yapılaşma değerlerine dönüştüren** yeni katmanı ekler.
 
-## Bu sürümde ne değişti?
+## V3.1.5 ile gelen asıl çözüm
 
-- TKGM il → ilçe → mahalle/köy → ada → parsel sorgusu ve gerçek parsel geometrisi korunur.
-- 117 doğrulanmış resmî belediye/e-İmar bağlantısı uygulama paketinde gömülü kalır.
-- Belediye kataloğundaki **Askıdaki İmar Planı**, plan ilanı ve yürürlükteki plan hizmetleri plan kayıt kaynağı olarak belirlenir.
-- Kamuya açık resmî e-Devlet plan/askı tabloları, yalnızca HTTPS ve resmî `turkiye.gov.tr` kaynakları üzerinden kontrollü biçimde okunur.
-- Ada ve parsel numarasıyla eşleşen kayıtlar yeni sonuç kartında gösterilir.
-- **İstanbul / Pendik / Yeşil Bağlar / 964 ada / 26 parsel** için resmî kamu kaydı, ağ kaynağı geçici olarak çalışmasa bile doğrulanmış referans kayıt olarak bulunur.
-- Kayıt başlığı, plan türü, açıkça yazılmışsa ölçek, askı başlangıç/bitiş tarihleri ve resmî kaynak bağlantısı gösterilir.
-- Plan ölçeği yalnızca resmî kayıt metninde açıkça yazıyorsa gösterilir; UİP/NİP kısaltmasından ölçek tahmini yapılmaz.
-- Kayıt metninde açıkça TAKS, emsal, kat, Hmax veya kullanım kararı geçiyorsa bunlar yalnızca **“kayıtta geçen gösterge”** olarak ayrıştırılır.
-- Tarihsel/askı kaydındaki göstergeler güncel imar hakkı olarak kullanılmaz ve otomatik inşaat hesabına sokulmaz.
-- Yeni sonuç kartı: **“Bu parsel için resmî plan veya askı kaydı var mı?”**
-- Yeni API:
+Türkiye’de bütün belediyelerin TAKS, emsal, kat ve plan notlarını aynı açık API üzerinden vermemesi nedeniyle, kullanıcı artık belediye/e‑Plan/e‑Devlet üzerinden aldığı güncel belgeyi Planlamasyon’a ekleyebilir:
+
+- PDF imar durumu belgesi
+- İmar çapı
+- Plan notu
+- Herkese açık resmî PDF/HTML/JSON/XML bağlantısı
+- Taranmış PDF veya PNG/JPG görsel
+- Kopyalanmış resmî belge metni
+
+Planlamasyon belgeyi okur ve aşağıdaki alanları mümkün olduğu ölçüde otomatik doldurur:
+
+- Yetkili idare
+- Plan adı, işlem/karar numarası, ölçek ve tarih
+- Plan fonksiyonu
+- TAKS
+- Emsal / KAKS
+- Kat adedi
+- Yençok / Hmax
+- Yapı nizamı
+- Ön, yan ve arka bahçe mesafeleri
+- Otopark, yol terki, taşkın ve açıkça yazılmış özel hükümler
+- Belgedeki konut, villa, havuz, bodrum, balkon, çatı ve benzeri izin ifadeleri
+
+Okunan değerler kullanıcıya gösterilir; kullanıcı resmî belgeyle karşılaştırıp onayladıktan sonra hesap motoruna aktarılır.
+
+## Güvenlik ve doğruluk kuralları
+
+- Belgedeki ada/parsel ile sorgulanan ada/parsel eşleşmezse belge **uygulanmaz**.
+- Belge ada/parseli okunamazsa kullanıcıdan açık parsel doğrulaması istenir.
+- Askı/ilan veya tarihsel plan kaydı güncel imar hakkı olarak **kullanılmaz**.
+- Belgede bulunmayan TAKS, emsal, kat veya çekme mesafesi **üretilmez**.
+- Her bulunan alan için belge metnindeki kanıt parçası ve okuma güveni gösterilir.
+- Belge özeti SHA‑256 ile işaretlenir; kaynak ve parser sürümü sonuçta saklanır.
+- Otomatik okuma bağlayıcı değildir; ruhsat öncesinde yetkili idare kaydı esastır.
+
+## Gizlilik
+
+Yerel dosya yüklemesinde:
+
+- PDF metni kullanıcının tarayıcısında çıkarılır.
+- Taranmış belge/görsel OCR işlemi tarayıcıda yapılır.
+- Belgenin kendisi Planlamasyon sunucusuna yüklenmez.
+- Yalnızca çıkarılan metin alan ayrıştırma API’sine gönderilir.
+
+Herkese açık resmî bağlantı yöntemi seçilirse belge Netlify Function üzerinden alınır. Yalnızca HTTPS ve genel internet adresleri kabul edilir; özel ağ/localhost adresleri engellenir.
+
+## Çalışan temel katmanlar
+
+- TKGM il → ilçe → mahalle/köy → ada → parsel sorgusu
+- Gerçek parsel GeoJSON geometrisi ve uydu haritası
+- Parsel alanı, nitelik ve pafta
+- 117 gömülü resmî belediye/e‑İmar hizmeti
+- e‑Plan ve TUCBS resmî kaynak yönlendirmeleri
+- Kamuya açık ada–parsel plan/askı kaydı keşfi
+- Resmî imar belgesi okuma ve parsel eşleştirme
+- Doğrulanmış değerlerden taban oturumu, toplam inşaat alanı ve açık alan hesabı
+- Kaynak–sonuç ilişkisi
+- Çalışmalarım, Favorilerim, Taleplerim ve hesap altyapısı
+- Telefon sistem temasından bağımsız açık/koyu tema
+
+## API’ler
 
 ```text
-/api/plan-records?province=İstanbul&district=Pendik&neighbourhood=Yeşil%20Bağlar&block=964&parcel=26
+/api/tkgm
+/api/analyze
+/api/official-services
+/api/plan-records
+/api/parse-zoning-document
+/api/request-analysis
+/api/user-data
+/api/health
 ```
 
-- Yakın çevrede Overpass servisleri sonuç vermezse kontrollü Nominatim yedeği denenir.
-- Açık/koyu tema cihaz temasından bağımsızdır.
+Belge metni örneği:
 
-## Çok önemli doğruluk sınırı
+```http
+POST /api/parse-zoning-document
+Content-Type: application/json
 
-Bir askı, ilan veya arşiv kaydının ada–parsel ile eşleşmesi, kaydın bugün yürürlükte olduğu ya da parsele yapı hakkı verdiği anlamına gelmez.
+{
+  "mode": "text",
+  "text": "İMAR DURUMU BELGESİ ... Ada: 964 Parsel: 26 ... TAKS: 0,30 ...",
+  "query": { "province": "İstanbul", "district": "Pendik", "block": "964", "parcel": "26" },
+  "fileName": "imar-durumu.pdf",
+  "mimeType": "application/pdf"
+}
+```
 
-Bu nedenle Planlamasyon:
-
-- eşleşen plan/askı kaydını kullanıcıya gösterir,
-- ilan/askı tarihlerini ve resmî kaynağı açıklar,
-- güncel yürürlük, plan paftası ve plan notlarının ayrıca doğrulanması gerektiğini bildirir,
-- TAKS, emsal, kat, Hmax ve toplam inşaat hakkını yalnızca güncel, yapılandırılmış ve güvenilir imar kaynağı veya kullanıcı tarafından eklenen resmî belge varsa hesaplar,
-- tarihsel kayıttaki sayıları güncel hakmış gibi kullanmaz,
-- kaynak yoksa sayı üretmez.
-
-## Sağlık ve doğrudan test adresleri
+## Sağlık kontrolü
 
 ```text
 https://planlamasyon.netlify.app/api/health
@@ -46,26 +101,15 @@ https://planlamasyon.netlify.app/api/health
 Beklenen sürüm:
 
 ```text
-app: planlamasyon-netlify-v3.1.4
-publicPlanRecordDiscovery: true
-publicPlanRecordApi: /api/plan-records
-```
-
-Pendik referans testi:
-
-```text
-https://planlamasyon.netlify.app/api/plan-records?province=İstanbul&district=Pendik&neighbourhood=Yeşil%20Bağlar&block=964&parcel=26
-```
-
-Beklenen kayıt başlığı:
-
-```text
-PENDİK REVİZYON NİP / YEŞİLBAĞLAR MAH. 964 ADA 26 PARSELE İLİŞKİN N.İ.P. DEĞİŞİKLİĞİ
+app: planlamasyon-netlify-v3.1.5
+officialZoningDocumentReader: true
+officialZoningDocumentApi: /api/parse-zoning-document
+parcelDocumentMatchGuard: true
 ```
 
 ## GitHub → Netlify güncelleme
 
-Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.4 paketiyle değiştirin:
+Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.5 paketiyle değiştirin:
 
 ```text
 package.json
@@ -77,7 +121,11 @@ README.md
 Önerilen commit mesajı:
 
 ```text
-Planlamasyon v3.1.4 resmî plan kayıt motoru
+Planlamasyon v3.1.5 güncel resmî imar belgesi okuma motoru
 ```
 
-Netlify otomatik deploy alır. `Published` olduktan sonra önce `/api/health`, ardından Pendik 964/26 plan kayıt testi yapılmalıdır.
+Netlify otomatik deploy alır. `Published` olduktan sonra `/api/health` kontrol edilmeli; ardından gerçek parsel sorgulanıp **Resmî İmar Belgesi Yükle ve Oku** akışı test edilmelidir.
+
+## Dürüst kapsam
+
+V3.1.5, kullanıcı güncel resmî imar belgesine erişebildiğinde eksik yapılaşma değerlerini otomatik okuyup sonuç motoruna taşıyabilir. e‑Devlet oturumu isteyen sonucu kullanıcı adına gizlice açmaz ve tüm belediyelerde belge olmadan TAKS/emsal üretmez. Bu sınır, yanlış imar hakkı gösterilmesini önlemek için bilinçlidir.

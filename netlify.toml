@@ -16,6 +16,24 @@
   force = true
 
 [[redirects]]
+  from = "/api/analyze"
+  to = "/.netlify/functions/analyze"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/user-data"
+  to = "/.netlify/functions/user-data"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/request-analysis"
+  to = "/.netlify/functions/request-analysis"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/health"
   to = "/.netlify/functions/health"
   status = 200
@@ -32,6 +50,7 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(self)"
+    X-Frame-Options = "SAMEORIGIN"
 
 [[headers]]
   for = "/assets/*"

@@ -40,6 +40,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/official-services"
+  to = "/.netlify/functions/official-services"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

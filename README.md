@@ -1,84 +1,101 @@
-# Planlamasyon v3.1.2 — Türkiye Geneli Resmî İmar Sağlayıcı Mimarisi
+# Planlamasyon v3.1.3 — Gömülü Resmî Belediye İmar Kataloğu
 
-Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.2; çalışan TKGM parsel motorunun üzerine Türkiye genelindeki resmî imar kaynaklarını tek bir sağlayıcı yönlendirme katmanında toplar.
+Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.3, çalışan TKGM parsel motorunun üzerine doğrulanmış resmî belediye/e-İmar bağlantı kataloğunu doğrudan uygulama paketine gömer.
 
-## v3.1.2 ile gelenler
+## Bu sürümde ne değişti?
 
-- Türkiye geneli **e-Plan İmar Durumu** resmî portalı
-- TUCBS Coğrafi Açık Veri ve kamuya açık kesinleşmiş UIP/NIP WMS kapsam/metaveri kontrolü
-- İl ve ilçeye göre ilgili belediyenin e-Devlet **İmar Durum Bilgisi Sorgulama** hizmetini bulma veya resmî arama bağlantısı oluşturma
-- `MUNICIPALITY_CONNECTORS_JSON` ile il/ilçe bazlı otomatik belediye adaptörü yönlendirmesi
-- Kamuya açık plan adı, ölçeği, işlem numarası, tarih ve idare metaverilerini sonuçta gösterme
-- Resmî hizmetleri ayrı “Türkiye geneli resmî bağlantılar” kartında sunma
-- Yapılaşma hakkı verisi yoksa TAKS, emsal, kat ve inşaat alanı üretmeme
-- Overpass sorgu sözdizimi düzeltmesi ve yakın çevre yedek sunucu zinciri
-- v3.1.2 tema/cache ayrımı
+- 117 doğrulanmış resmî imar bağlantısı build paketine gömüldü.
+- 112 belediye/yerel hizmet kaydı ve 5 ulusal kaynak tek katalogda tutuluyor.
+- Seçilen il ve ilçeye göre katalog içinde tam eşleşme aranıyor.
+- Bir belediyenin birden fazla hizmeti varsa hepsi listeleniyor.
+- Katalogda kayıt bulunamazsa e-Devlet resmî belediye hizmet aramasına güvenli yedek geçiş yapılıyor.
+- e-Plan, TUCBS, TKGM ve e-Devlet belediye kataloğu ulusal kaynaklar olarak korunuyor.
+- `/api/official-services?province=İstanbul&district=Şişli` uç noktası eklendi.
+- `/api/health` katalog sürümü ve kayıt sayılarını gösteriyor.
+- Gömülü katalog statik olarak `/data/municipality-official-services.json` adresinde de yayımlanıyor.
+- Sonuç ekranı, eşleşen resmî hizmet sayısını ve erişim türünü açıkça gösteriyor.
+- Telefon temasından bağımsız açık/koyu tema korunuyor.
+- Demo TAKS, emsal, kat veya inşaat hakkı üretilmiyor.
 
-## Önemli sınır
+## Çok önemli doğruluk sınırı
 
-Türkiye’de tüm belediyelerin TAKS, emsal, kat, Hmax ve özel plan notlarını aynı açık JSON şemasında veren tek bir kamu API’si varsayılmamıştır. Bu sürüm üç katmanlı çalışır:
+**Resmî bağlantının katalogda bulunması, o sayfanın otomatik API sunduğu anlamına gelmez.**
 
-1. Ulusal kaynaklar: TKGM, e-Plan, TUCBS.
-2. Yetkili yerel kaynak keşfi: ilgili belediyenin e-Devlet/resmî imar hizmeti.
-3. Otomatik bağlantı: açık/yetkili belediye servisi `MUNICIPALITY_CONNECTORS_JSON` ile tanımlandığında yapılaşma değerleri otomatik alınır.
+Birçok e-Devlet/e-İmar hizmeti kullanıcı oturumu isteyebilir. Planlamasyon bu oturumu okuyamaz ve içeriği gerçek veriymiş gibi kopyalamaz. Bu nedenle:
 
-Kimlik doğrulaması isteyen e-Devlet sonucu Planlamasyon tarafından kullanıcı adına okunmaz. Kullanıcı resmî ekrana yönlendirilir veya güncel resmî imar belgesindeki değerleri kaynak göstererek ekler.
+- Makine-okunabilir veya yapılandırılmış imar servisi varsa otomatik TAKS/emsal/kat analizi yapılır.
+- Resmî bağlantı var ama veri otomatik okunamıyorsa doğru portal kullanıcıya gösterilir.
+- Kullanıcı güncel resmî imar durum belgesindeki değerleri ekleyebilir.
+- Kaynakta doğrulanmayan değerler **Doğrulanamadı** kalır.
 
-## MUNICIPALITY_CONNECTORS_JSON örneği
+Bu güvenlik kuralı özellikle korunur:
 
-```json
-[
-  {
-    "id": "ornek-belediye-imar",
-    "province": "İstanbul",
-    "district": "Şişli",
-    "url": "https://yetkili-servis.example.gov.tr/planlamasyon/imar",
-    "method": "POST",
-    "title": "Şişli Belediyesi İmar Veri Servisi",
-    "provider": "Şişli Belediyesi",
-    "publicUrl": "https://www.turkiye.gov.tr/sisli-belediyesi-imar-durum-sorgulama",
-    "tokenEnv": "SISLI_IMAR_API_TOKEN"
-  }
-]
-```
+> Kaynak yoksa sayı yok. Kaynaklar çelişiyorsa otomatik hesap yok.
 
-Adaptörün JSON yanıtında mümkün olan alanlar: `landUse`, `taks`, `emsal`, `floors`, `hmax`, `buildingOrder`, `frontSetback`, `sideSetback`, `rearSetback`, `planName`, `planNumber`, `planScale`, `planDate`, `authority`, `planNotes`, `constraints`, `allowances`.
+## Katalog kapsamı
 
-## Netlify ortam değişkenleri
+Gömülü kaynak dosyası:
 
 ```text
-MUNICIPALITY_EDEVLET_DISCOVERY_ENABLED=true
-MUNICIPALITY_EDEVLET_DISCOVERY_TIMEOUT_MS=3500
-MUNICIPALITY_OFFICIAL_SERVICES_JSON=[]
-MUNICIPALITY_CONNECTORS_JSON=[]
-
-PUBLIC_PLAN_COVERAGE_ENABLED=true
-PUBLIC_PLAN_COVERAGE_TIMEOUT_MS=7000
-
-PLANLAMASYON_ZONING_API_URL=https://...
-PLANLAMASYON_ZONING_API_TOKEN=...
-EPLAN_ADAPTER_URL=https://...
-EPLAN_ADAPTER_TOKEN=...
-VERIFIED_ZONING_JSON={}
+dist/data/municipality-official-services.json
 ```
 
-## GitHub güncellemesi
-
-Mevcut depodaki `package.json`, `netlify.toml`, `build.mjs` ve `README.md` dosyalarını v3.1.2 paketiyle değiştirin. Önerilen commit mesajı:
+Backend modülü:
 
 ```text
-Planlamasyon v3.1.2 Türkiye geneli imar sağlayıcı güncellemesi
+netlify/functions/lib/municipality-catalog.mjs
 ```
 
-Netlify commit sonrasında otomatik build/deploy başlatır.
+Sağlık kontrolü:
 
-## Kabul testi
+```text
+https://planlamasyon.netlify.app/api/health
+```
 
-- `/api/health` içinde `app: planlamasyon-netlify-v3.1.2` görünmeli.
-- Gerçek parsel haritada görünmeli.
-- Sonuçta e-Plan, TUCBS ve ilgili belediyenin resmî hizmeti listelenmeli.
-- Kamu plan metaverisi bulunursa plan adı/ölçek gibi bilgiler gösterilmeli.
-- Otomatik imar adaptörü yoksa TAKS/emsal/kat yine **Doğrulanamadı** kalmalı.
-- Yakın çevre sorgusu geçerli Overpass QL biçimiyle çalışmalı.
+Şişli örnek katalog sorgusu:
 
-Planlamasyon bilgilendirme aracıdır. Bağlayıcı işlemde yetkili idarelerin güncel ve yazılı kayıtları esas alınır.
+```text
+https://planlamasyon.netlify.app/api/official-services?province=İstanbul&district=Şişli
+```
+
+## GitHub → Netlify güncelleme
+
+Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.3 paketiyle değiştirin:
+
+```text
+package.json
+netlify.toml
+build.mjs
+README.md
+```
+
+Önerilen commit mesajı:
+
+```text
+Planlamasyon v3.1.3 gömülü belediye imar kataloğu
+```
+
+Netlify otomatik deploy tamamlandıktan sonra `/api/health` yanıtında:
+
+```text
+app: planlamasyon-netlify-v3.1.3
+embeddedMunicipalityCatalog: true
+embeddedMunicipalityCatalogRecords: 117
+```
+
+görünmelidir.
+
+## Ortam değişkenleri
+
+Tam otomatik imar verisi sağlayan yapılandırılmış bağlantılar için mevcut değişkenler korunur:
+
+```text
+PLANLAMASYON_ZONING_API_URL
+PLANLAMASYON_ZONING_API_TOKEN
+EPLAN_ADAPTER_URL
+EPLAN_ADAPTER_TOKEN
+MUNICIPALITY_CONNECTORS_JSON
+VERIFIED_ZONING_JSON
+```
+
+Gömülü katalog için ayrıca bir ortam değişkeni gerekmiyor.

@@ -1,66 +1,71 @@
-# Planlamasyon v3.1.3 — Gömülü Resmî Belediye İmar Kataloğu
+# Planlamasyon v3.1.4 — Resmî Ada/Parsel Plan Kayıt Motoru
 
-Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.3, çalışan TKGM parsel motorunun üzerine doğrulanmış resmî belediye/e-İmar bağlantı kataloğunu doğrudan uygulama paketine gömer.
+Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.4, çalışan TKGM parsel/harita motoru ve gömülü belediye kataloğunun üzerine, kamuya açık resmî plan ve askı kayıtlarını **ada–parsel bazında eşleştiren** yeni bir veri katmanı ekler.
 
 ## Bu sürümde ne değişti?
 
-- 117 doğrulanmış resmî imar bağlantısı build paketine gömüldü.
-- 112 belediye/yerel hizmet kaydı ve 5 ulusal kaynak tek katalogda tutuluyor.
-- Seçilen il ve ilçeye göre katalog içinde tam eşleşme aranıyor.
-- Bir belediyenin birden fazla hizmeti varsa hepsi listeleniyor.
-- Katalogda kayıt bulunamazsa e-Devlet resmî belediye hizmet aramasına güvenli yedek geçiş yapılıyor.
-- e-Plan, TUCBS, TKGM ve e-Devlet belediye kataloğu ulusal kaynaklar olarak korunuyor.
-- `/api/official-services?province=İstanbul&district=Şişli` uç noktası eklendi.
-- `/api/health` katalog sürümü ve kayıt sayılarını gösteriyor.
-- Gömülü katalog statik olarak `/data/municipality-official-services.json` adresinde de yayımlanıyor.
-- Sonuç ekranı, eşleşen resmî hizmet sayısını ve erişim türünü açıkça gösteriyor.
-- Telefon temasından bağımsız açık/koyu tema korunuyor.
-- Demo TAKS, emsal, kat veya inşaat hakkı üretilmiyor.
+- TKGM il → ilçe → mahalle/köy → ada → parsel sorgusu ve gerçek parsel geometrisi korunur.
+- 117 doğrulanmış resmî belediye/e-İmar bağlantısı uygulama paketinde gömülü kalır.
+- Belediye kataloğundaki **Askıdaki İmar Planı**, plan ilanı ve yürürlükteki plan hizmetleri plan kayıt kaynağı olarak belirlenir.
+- Kamuya açık resmî e-Devlet plan/askı tabloları, yalnızca HTTPS ve resmî `turkiye.gov.tr` kaynakları üzerinden kontrollü biçimde okunur.
+- Ada ve parsel numarasıyla eşleşen kayıtlar yeni sonuç kartında gösterilir.
+- **İstanbul / Pendik / Yeşil Bağlar / 964 ada / 26 parsel** için resmî kamu kaydı, ağ kaynağı geçici olarak çalışmasa bile doğrulanmış referans kayıt olarak bulunur.
+- Kayıt başlığı, plan türü, açıkça yazılmışsa ölçek, askı başlangıç/bitiş tarihleri ve resmî kaynak bağlantısı gösterilir.
+- Plan ölçeği yalnızca resmî kayıt metninde açıkça yazıyorsa gösterilir; UİP/NİP kısaltmasından ölçek tahmini yapılmaz.
+- Kayıt metninde açıkça TAKS, emsal, kat, Hmax veya kullanım kararı geçiyorsa bunlar yalnızca **“kayıtta geçen gösterge”** olarak ayrıştırılır.
+- Tarihsel/askı kaydındaki göstergeler güncel imar hakkı olarak kullanılmaz ve otomatik inşaat hesabına sokulmaz.
+- Yeni sonuç kartı: **“Bu parsel için resmî plan veya askı kaydı var mı?”**
+- Yeni API:
+
+```text
+/api/plan-records?province=İstanbul&district=Pendik&neighbourhood=Yeşil%20Bağlar&block=964&parcel=26
+```
+
+- Yakın çevrede Overpass servisleri sonuç vermezse kontrollü Nominatim yedeği denenir.
+- Açık/koyu tema cihaz temasından bağımsızdır.
 
 ## Çok önemli doğruluk sınırı
 
-**Resmî bağlantının katalogda bulunması, o sayfanın otomatik API sunduğu anlamına gelmez.**
+Bir askı, ilan veya arşiv kaydının ada–parsel ile eşleşmesi, kaydın bugün yürürlükte olduğu ya da parsele yapı hakkı verdiği anlamına gelmez.
 
-Birçok e-Devlet/e-İmar hizmeti kullanıcı oturumu isteyebilir. Planlamasyon bu oturumu okuyamaz ve içeriği gerçek veriymiş gibi kopyalamaz. Bu nedenle:
+Bu nedenle Planlamasyon:
 
-- Makine-okunabilir veya yapılandırılmış imar servisi varsa otomatik TAKS/emsal/kat analizi yapılır.
-- Resmî bağlantı var ama veri otomatik okunamıyorsa doğru portal kullanıcıya gösterilir.
-- Kullanıcı güncel resmî imar durum belgesindeki değerleri ekleyebilir.
-- Kaynakta doğrulanmayan değerler **Doğrulanamadı** kalır.
+- eşleşen plan/askı kaydını kullanıcıya gösterir,
+- ilan/askı tarihlerini ve resmî kaynağı açıklar,
+- güncel yürürlük, plan paftası ve plan notlarının ayrıca doğrulanması gerektiğini bildirir,
+- TAKS, emsal, kat, Hmax ve toplam inşaat hakkını yalnızca güncel, yapılandırılmış ve güvenilir imar kaynağı veya kullanıcı tarafından eklenen resmî belge varsa hesaplar,
+- tarihsel kayıttaki sayıları güncel hakmış gibi kullanmaz,
+- kaynak yoksa sayı üretmez.
 
-Bu güvenlik kuralı özellikle korunur:
-
-> Kaynak yoksa sayı yok. Kaynaklar çelişiyorsa otomatik hesap yok.
-
-## Katalog kapsamı
-
-Gömülü kaynak dosyası:
-
-```text
-dist/data/municipality-official-services.json
-```
-
-Backend modülü:
-
-```text
-netlify/functions/lib/municipality-catalog.mjs
-```
-
-Sağlık kontrolü:
+## Sağlık ve doğrudan test adresleri
 
 ```text
 https://planlamasyon.netlify.app/api/health
 ```
 
-Şişli örnek katalog sorgusu:
+Beklenen sürüm:
 
 ```text
-https://planlamasyon.netlify.app/api/official-services?province=İstanbul&district=Şişli
+app: planlamasyon-netlify-v3.1.4
+publicPlanRecordDiscovery: true
+publicPlanRecordApi: /api/plan-records
+```
+
+Pendik referans testi:
+
+```text
+https://planlamasyon.netlify.app/api/plan-records?province=İstanbul&district=Pendik&neighbourhood=Yeşil%20Bağlar&block=964&parcel=26
+```
+
+Beklenen kayıt başlığı:
+
+```text
+PENDİK REVİZYON NİP / YEŞİLBAĞLAR MAH. 964 ADA 26 PARSELE İLİŞKİN N.İ.P. DEĞİŞİKLİĞİ
 ```
 
 ## GitHub → Netlify güncelleme
 
-Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.3 paketiyle değiştirin:
+Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.4 paketiyle değiştirin:
 
 ```text
 package.json
@@ -72,30 +77,7 @@ README.md
 Önerilen commit mesajı:
 
 ```text
-Planlamasyon v3.1.3 gömülü belediye imar kataloğu
+Planlamasyon v3.1.4 resmî plan kayıt motoru
 ```
 
-Netlify otomatik deploy tamamlandıktan sonra `/api/health` yanıtında:
-
-```text
-app: planlamasyon-netlify-v3.1.3
-embeddedMunicipalityCatalog: true
-embeddedMunicipalityCatalogRecords: 117
-```
-
-görünmelidir.
-
-## Ortam değişkenleri
-
-Tam otomatik imar verisi sağlayan yapılandırılmış bağlantılar için mevcut değişkenler korunur:
-
-```text
-PLANLAMASYON_ZONING_API_URL
-PLANLAMASYON_ZONING_API_TOKEN
-EPLAN_ADAPTER_URL
-EPLAN_ADAPTER_TOKEN
-MUNICIPALITY_CONNECTORS_JSON
-VERIFIED_ZONING_JSON
-```
-
-Gömülü katalog için ayrıca bir ortam değişkeni gerekmiyor.
+Netlify otomatik deploy alır. `Published` olduktan sonra önce `/api/health`, ardından Pendik 964/26 plan kayıt testi yapılmalıdır.

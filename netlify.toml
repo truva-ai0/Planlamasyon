@@ -46,6 +46,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/plan-records"
+  to = "/.netlify/functions/plan-records"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

@@ -1540,6 +1540,7 @@ await writeFile('package.json', `${JSON.stringify(packageJson340, null, 2)}\n`);
 await rm('postbuild-tests/v330-postbuild.test.mjs', { force: true });
 
 const wrangler340 = (await readFile('wrangler.toml', 'utf8'))
+  .replace(/^PLAN_AI_AUTO_ENABLED\s*=.*(?:\r?\n|$)/gm, '')
   .replace('OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS = "16000"', 'OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS = "9000"')
   .replace(
     'PLAN_AI_TIMEOUT_MS = "24000"',

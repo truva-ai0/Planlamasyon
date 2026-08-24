@@ -58,6 +58,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/open-source-scan"
+  to = "/.netlify/functions/open-source-scan"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

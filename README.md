@@ -1,115 +1,65 @@
-# Planlamasyon v3.1.5 — Güncel Resmî İmar Belgesi Okuma ve Analiz Motoru
+# Planlamasyon v3.1.6 — E-Devletsiz Açık Resmî Kaynak Tarama Motoru
 
-Plan AI bilinçli olarak **v3.2** aşamasına bırakılmıştır. v3.1.5, çalışan TKGM parsel/harita motoru, 117 bağlantılı resmî belediye kataloğu ve ada–parsel plan kayıt motorunun üzerine **güncel resmî imar belgesini okuyup yapılaşma değerlerine dönüştüren** yeni katmanı ekler.
+Plan AI bu sürümde bilinçli olarak kapalıdır ve v3.2 aşamasına bırakılmıştır. V3.1.6'nın amacı, parsel bulunduktan sonra hemen “Doğrulanamadı” demek yerine e-Devlet girişi istemeyen açık resmî kaynakları sırayla kontrol etmek, gerçek yapılaşma değeri bulursa hesapları otomatik üretmektir.
 
-## V3.1.5 ile gelen asıl çözüm
+## Çalışma sırası
 
-Türkiye’de bütün belediyelerin TAKS, emsal, kat ve plan notlarını aynı açık API üzerinden vermemesi nedeniyle, kullanıcı artık belediye/e‑Plan/e‑Devlet üzerinden aldığı güncel belgeyi Planlamasyon’a ekleyebilir:
+1. TKGM’den gerçek parsel, alan ve geometri alınır.
+2. Yapılandırılmış açık/yetkili imar bağlantıları kontrol edilir.
+3. TUCBS / e-Plan açık WMS ve WFS plan katmanları denenir.
+4. Gömülü 117 resmî belediye bağlantısından ilgili ilçe ve büyükşehir kaynakları seçilir.
+5. Belediye portalı açıksa sayfadaki WMS, WFS, ArcGIS REST ve JSON veri kapıları aranır.
+6. Veri kapısı sayfanın JavaScript dosyasında bulunuyorsa aynı resmî alan adına ait dosyalar kontrollü olarak taranır.
+7. Bulunan farklı alan adları Planlamasyon’un ortak alanlarına çevrilir: plan fonksiyonu, TAKS, emsal, kat, Yençok/Hmax, yapı nizamı ve çekme mesafeleri.
+8. Gerçek değer bulunursa taban oturumu, toplam emsale esas alan ve dışarıda kalan yaklaşık alan hesaplanır.
+9. Ancak açık kaynak taraması gerçekten tamamlandıktan sonra sonuç yoksa “Açık resmî kaynaklarda bulunamadığı için hesaplanamadı” denir.
 
-- PDF imar durumu belgesi
-- İmar çapı
-- Plan notu
-- Herkese açık resmî PDF/HTML/JSON/XML bağlantısı
-- Taranmış PDF veya PNG/JPG görsel
-- Kopyalanmış resmî belge metni
+## Basit açıklama
 
-Planlamasyon belgeyi okur ve aşağıdaki alanları mümkün olduğu ölçüde otomatik doldurur:
+- **WMS/WFS:** Kurumun harita bilgisini başka uygulamalara açtığı resmî veri bağlantısıdır.
+- **ArcGIS REST:** Belediyenin harita sistemindeki bilgiyi uygulamaların okuyabildiği başka bir veri bağlantısıdır.
+- **Adaptör:** Farklı belediyelerin farklı isimlerdeki bilgilerini Planlamasyon’un anlayacağı ortak biçime çeviren parçadır.
 
-- Yetkili idare
-- Plan adı, işlem/karar numarası, ölçek ve tarih
-- Plan fonksiyonu
-- TAKS
-- Emsal / KAKS
-- Kat adedi
-- Yençok / Hmax
-- Yapı nizamı
-- Ön, yan ve arka bahçe mesafeleri
-- Otopark, yol terki, taşkın ve açıkça yazılmış özel hükümler
-- Belgedeki konut, villa, havuz, bodrum, balkon, çatı ve benzeri izin ifadeleri
+## Kullanıcıya ne gösterilir?
 
-Okunan değerler kullanıcıya gösterilir; kullanıcı resmî belgeyle karşılaştırıp onayladıktan sonra hesap motoruna aktarılır.
+Sonuç ekranındaki kapalı “Kontrol edilen resmî kaynaklar” bölümünde:
 
-## Güvenlik ve doğruluk kuralları
+- Kaç kaynak denendiği,
+- Kaç kaynağa erişildiği,
+- Hangi kaynakta veri bulunduğu,
+- Hangi kaynağın giriş/yetki istediği,
+- Hangi kaynağın zaman aşımına uğradığı
 
-- Belgedeki ada/parsel ile sorgulanan ada/parsel eşleşmezse belge **uygulanmaz**.
-- Belge ada/parseli okunamazsa kullanıcıdan açık parsel doğrulaması istenir.
-- Askı/ilan veya tarihsel plan kaydı güncel imar hakkı olarak **kullanılmaz**.
-- Belgede bulunmayan TAKS, emsal, kat veya çekme mesafesi **üretilmez**.
-- Her bulunan alan için belge metnindeki kanıt parçası ve okuma güveni gösterilir.
-- Belge özeti SHA‑256 ile işaretlenir; kaynak ve parser sürümü sonuçta saklanır.
-- Otomatik okuma bağlayıcı değildir; ruhsat öncesinde yetkili idare kaydı esastır.
+görülebilir.
 
-## Gizlilik
+Veri bulunursa hesap sonucu otomatik gösterilir. Veri bulunamazsa hangi kaynakların denendiği açıkça gösterilir. Resmî belge yükleme ana yöntem değildir; yalnızca bütün açık kaynaklar sonuç vermediğinde son tamamlama seçeneğidir.
 
-Yerel dosya yüklemesinde:
-
-- PDF metni kullanıcının tarayıcısında çıkarılır.
-- Taranmış belge/görsel OCR işlemi tarayıcıda yapılır.
-- Belgenin kendisi Planlamasyon sunucusuna yüklenmez.
-- Yalnızca çıkarılan metin alan ayrıştırma API’sine gönderilir.
-
-Herkese açık resmî bağlantı yöntemi seçilirse belge Netlify Function üzerinden alınır. Yalnızca HTTPS ve genel internet adresleri kabul edilir; özel ağ/localhost adresleri engellenir.
-
-## Çalışan temel katmanlar
-
-- TKGM il → ilçe → mahalle/köy → ada → parsel sorgusu
-- Gerçek parsel GeoJSON geometrisi ve uydu haritası
-- Parsel alanı, nitelik ve pafta
-- 117 gömülü resmî belediye/e‑İmar hizmeti
-- e‑Plan ve TUCBS resmî kaynak yönlendirmeleri
-- Kamuya açık ada–parsel plan/askı kaydı keşfi
-- Resmî imar belgesi okuma ve parsel eşleştirme
-- Doğrulanmış değerlerden taban oturumu, toplam inşaat alanı ve açık alan hesabı
-- Kaynak–sonuç ilişkisi
-- Çalışmalarım, Favorilerim, Taleplerim ve hesap altyapısı
-- Telefon sistem temasından bağımsız açık/koyu tema
-
-## API’ler
+## Canlı API’ler
 
 ```text
 /api/tkgm
 /api/analyze
+/api/open-source-scan
 /api/official-services
 /api/plan-records
 /api/parse-zoning-document
-/api/request-analysis
-/api/user-data
 /api/health
 ```
 
-Belge metni örneği:
-
-```http
-POST /api/parse-zoning-document
-Content-Type: application/json
-
-{
-  "mode": "text",
-  "text": "İMAR DURUMU BELGESİ ... Ada: 964 Parsel: 26 ... TAKS: 0,30 ...",
-  "query": { "province": "İstanbul", "district": "Pendik", "block": "964", "parcel": "26" },
-  "fileName": "imar-durumu.pdf",
-  "mimeType": "application/pdf"
-}
-```
-
-## Sağlık kontrolü
+Sağlık kontrolünde şu değerler görünmelidir:
 
 ```text
-https://planlamasyon.netlify.app/api/health
+app: planlamasyon-netlify-v3.1.6
+openOfficialSourceScan: true
+openOfficialSourceScanVersion: 3.1.6
+openOfficialSourceScanApi: /api/open-source-scan
+eDevletFreeSourcePriority: true
+documentUploadFallbackOnly: true
 ```
 
-Beklenen sürüm:
+## Netlify’a yükleme
 
-```text
-app: planlamasyon-netlify-v3.1.5
-officialZoningDocumentReader: true
-officialZoningDocumentApi: /api/parse-zoning-document
-parcelDocumentMatchGuard: true
-```
-
-## GitHub → Netlify güncelleme
-
-Mevcut GitHub `Planlamasyon` deposundaki şu dört dosyayı v3.1.5 paketiyle değiştirin:
+GitHub’daki mevcut Planlamasyon deposunda yalnızca şu dört dosya değiştirilir:
 
 ```text
 package.json
@@ -118,14 +68,16 @@ build.mjs
 README.md
 ```
 
-Önerilen commit mesajı:
+Commit mesajı önerisi:
 
 ```text
-Planlamasyon v3.1.5 güncel resmî imar belgesi okuma motoru
+Planlamasyon v3.1.6 e-Devletsiz açık resmî kaynak motoru
 ```
 
-Netlify otomatik deploy alır. `Published` olduktan sonra `/api/health` kontrol edilmeli; ardından gerçek parsel sorgulanıp **Resmî İmar Belgesi Yükle ve Oku** akışı test edilmelidir.
+Netlify GitHub değişikliğini otomatik algılar ve mevcut `planlamasyon.netlify.app` adresini günceller.
 
-## Dürüst kapsam
+## Önemli sınır
 
-V3.1.5, kullanıcı güncel resmî imar belgesine erişebildiğinde eksik yapılaşma değerlerini otomatik okuyup sonuç motoruna taşıyabilir. e‑Devlet oturumu isteyen sonucu kullanıcı adına gizlice açmaz ve tüm belediyelerde belge olmadan TAKS/emsal üretmez. Bu sınır, yanlış imar hakkı gösterilmesini önlemek için bilinçlidir.
+Bu motor açık ve e-Devlet istemeyen kaynakları gerçekten dener; ancak kurum veriyi dışarıya açmamışsa veya yalnızca kullanıcı girişi arkasında tutuyorsa o kapalı veriye erişim sağlamaz. Sistem erişemediği veriyi tahmin etmez. Bu, yanlış TAKS, emsal veya kat göstermemek için bilinçli güvenlik kuralıdır.
+
+Canlı TUCBS/e-Plan ve belediye uç noktalarının o anki erişim durumu yalnızca Netlify üzerindeki gerçek sorguyla kesinleşir; geliştirme ortamında dış ağ doğrulaması yapılamamıştır.

@@ -1,6 +1,7 @@
 name = "planlamasyon"
 main = "src/worker.js"
 compatibility_date = "2026-08-24"
+keep_vars = true
 
 [assets]
 directory = "./dist"

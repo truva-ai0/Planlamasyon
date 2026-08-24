@@ -64,6 +64,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/plan-ai"
+  to = "/.netlify/functions/plan-ai"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

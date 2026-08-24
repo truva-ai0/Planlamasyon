@@ -1,40 +1,36 @@
-# Planlamasyon v3.1.6 — E-Devletsiz Açık Resmî Kaynak Tarama Motoru
+# Planlamasyon v3.2 — Plan AI + NVIDIA Resmî Kaynak Okuma Motoru
 
-Plan AI bu sürümde bilinçli olarak kapalıdır ve v3.2 aşamasına bırakılmıştır. V3.1.6'nın amacı, parsel bulunduktan sonra hemen “Doğrulanamadı” demek yerine e-Devlet girişi istemeyen açık resmî kaynakları sırayla kontrol etmek, gerçek yapılaşma değeri bulursa hesapları otomatik üretmektir.
+Planlamasyon v3.2, v3.1.6'daki TKGM parsel/harita motorunu, 117 kayıtlı resmî belediye kaynağını ve e-Devletsiz açık kaynak taramasını korur. Yeni olarak **Plan AI**, normal taramanın bulduğu açık resmî belediye/e-Plan/TUCBS sayfaları ile metin katmanı bulunan PDF'leri okuyup imar değerlerini kaynak kanıtıyla çıkarmaya çalışır.
 
-## Çalışma sırası
+## Basit çalışma sırası
 
-1. TKGM’den gerçek parsel, alan ve geometri alınır.
-2. Yapılandırılmış açık/yetkili imar bağlantıları kontrol edilir.
-3. TUCBS / e-Plan açık WMS ve WFS plan katmanları denenir.
-4. Gömülü 117 resmî belediye bağlantısından ilgili ilçe ve büyükşehir kaynakları seçilir.
-5. Belediye portalı açıksa sayfadaki WMS, WFS, ArcGIS REST ve JSON veri kapıları aranır.
-6. Veri kapısı sayfanın JavaScript dosyasında bulunuyorsa aynı resmî alan adına ait dosyalar kontrollü olarak taranır.
-7. Bulunan farklı alan adları Planlamasyon’un ortak alanlarına çevrilir: plan fonksiyonu, TAKS, emsal, kat, Yençok/Hmax, yapı nizamı ve çekme mesafeleri.
-8. Gerçek değer bulunursa taban oturumu, toplam emsale esas alan ve dışarıda kalan yaklaşık alan hesaplanır.
-9. Ancak açık kaynak taraması gerçekten tamamlandıktan sonra sonuç yoksa “Açık resmî kaynaklarda bulunamadığı için hesaplanamadı” denir.
+1. TKGM'den gerçek parsel, alan ve geometri alınır.
+2. Açık resmî kaynaklar normal kodla taranır.
+3. Normal tarama eksik kalırsa Plan AI açık resmî sayfa ve belgeleri okur.
+4. Plan AI şu alanları arar: plan fonksiyonu, TAKS, emsal/KAKS, kat, Yençok/Hmax, yapı nizamı, ön/yan/arka bahçe mesafeleri ve plan bilgileri.
+5. Bir değer ancak **kaynak URL'si + kaynakta gerçekten bulunan kısa alıntı + doğru ada/parsel eşleşmesi + güncel/yürürlükte olduğuna dair yeterli işaret** varsa hesap motoruna aktarılır.
+6. Güvenilir değer bulunduğunda taban oturumu, yaklaşık toplam emsale esas alan ve dışarıda kalan alan hesaplanır.
+7. Kaynaklar çelişirse ilgili değer hesapta kullanılmaz.
+8. Hiçbir açık kaynak sonuç vermiyorsa sistem sayı uydurmaz; neden hesaplanamadığını söyler.
 
-## Basit açıklama
+## Plan AI modeli
 
-- **WMS/WFS:** Kurumun harita bilgisini başka uygulamalara açtığı resmî veri bağlantısıdır.
-- **ArcGIS REST:** Belediyenin harita sistemindeki bilgiyi uygulamaların okuyabildiği başka bir veri bağlantısıdır.
-- **Adaptör:** Farklı belediyelerin farklı isimlerdeki bilgilerini Planlamasyon’un anlayacağı ortak biçime çeviren parçadır.
+- Sağlayıcı: NVIDIA NIM
+- Model: `stepfun-ai/step-3.7-flash`
+- Sunucu değişkeni: `NVIDIA_API_KEY`
+- API: `/api/plan-ai`
 
-## Kullanıcıya ne gösterilir?
+API anahtarı tarayıcıya gönderilmez. Yalnızca Netlify Functions sunucu tarafında kullanılır.
 
-Sonuç ekranındaki kapalı “Kontrol edilen resmî kaynaklar” bölümünde:
+## Plan AI ne yapar / ne yapmaz?
 
-- Kaç kaynak denendiği,
-- Kaç kaynağa erişildiği,
-- Hangi kaynakta veri bulunduğu,
-- Hangi kaynağın giriş/yetki istediği,
-- Hangi kaynağın zaman aşımına uğradığı
+**Yapar:** Açık resmî HTML/metin/PDF içeriğini okur, belgede yazan imar değerlerini ayıklar, kaynak alıntısını kontrol eder ve mevcut analiz hakkında sade Türkçe soru-cevap sunar.
 
-görülebilir.
+**Yapmaz:** e-Devlet oturumunu aşmaz, kapalı belediye sistemine izinsiz girmez, başka parsele ait değeri kullanmaz, tarihsel askı kaydını bugünkü imar hakkı saymaz ve kaynakta olmayan TAKS/emsal/kat değerini tahmin etmez.
 
-Veri bulunursa hesap sonucu otomatik gösterilir. Veri bulunamazsa hangi kaynakların denendiği açıkça gösterilir. Resmî belge yükleme ana yöntem değildir; yalnızca bütün açık kaynaklar sonuç vermediğinde son tamamlama seçeneğidir.
+Metin katmanı olmayan tamamen taranmış PDF'lerde otomatik uzaktan okuma sınırlı olabilir. Kullanıcının belge yükleme/OCR yolu son yedek olarak korunur.
 
-## Canlı API’ler
+## Canlı API'ler
 
 ```text
 /api/tkgm
@@ -43,23 +39,28 @@ Veri bulunursa hesap sonucu otomatik gösterilir. Veri bulunamazsa hangi kaynakl
 /api/official-services
 /api/plan-records
 /api/parse-zoning-document
+/api/plan-ai
 /api/health
 ```
 
-Sağlık kontrolünde şu değerler görünmelidir:
+Sağlık kontrolü:
 
 ```text
-app: planlamasyon-netlify-v3.1.6
-openOfficialSourceScan: true
-openOfficialSourceScanVersion: 3.1.6
-openOfficialSourceScanApi: /api/open-source-scan
-eDevletFreeSourcePriority: true
-documentUploadFallbackOnly: true
+https://planlamasyon.truva-ai.com/api/health
 ```
 
-## Netlify’a yükleme
+Beklenen ana değerler:
 
-GitHub’daki mevcut Planlamasyon deposunda yalnızca şu dört dosya değiştirilir:
+```text
+app: planlamasyon-netlify-v3.2.0
+planAi: true
+planAiConfigured: true
+planAiModel: stepfun-ai/step-3.7-flash
+```
+
+## GitHub güncellemesi
+
+Mevcut Planlamasyon deposuna sadece şu dört dosya yüklenir:
 
 ```text
 package.json
@@ -71,13 +72,11 @@ README.md
 Commit mesajı önerisi:
 
 ```text
-Planlamasyon v3.1.6 e-Devletsiz açık resmî kaynak motoru
+Planlamasyon v3.2 Plan AI NVIDIA entegrasyonu
 ```
 
-Netlify GitHub değişikliğini otomatik algılar ve mevcut `planlamasyon.netlify.app` adresini günceller.
+Netlify'da `NVIDIA_API_KEY` tanımlı olmalıdır. Yeni GitHub commit'i Netlify tarafından yeniden yayınlandığında Plan AI aktif olur.
 
-## Önemli sınır
+## Doğruluk kuralı
 
-Bu motor açık ve e-Devlet istemeyen kaynakları gerçekten dener; ancak kurum veriyi dışarıya açmamışsa veya yalnızca kullanıcı girişi arkasında tutuyorsa o kapalı veriye erişim sağlamaz. Sistem erişemediği veriyi tahmin etmez. Bu, yanlış TAKS, emsal veya kat göstermemek için bilinçli güvenlik kuralıdır.
-
-Canlı TUCBS/e-Plan ve belediye uç noktalarının o anki erişim durumu yalnızca Netlify üzerindeki gerçek sorguyla kesinleşir; geliştirme ortamında dış ağ doğrulaması yapılamamıştır.
+Plan AI bir yorum katmanıdır; kaynak yerine geçmez. Kullanıcıya gösterilen yapılaşma hesabı ancak sistemin kaynak kanıtı kontrolünden geçen değerlerle yapılır. Ruhsat ve bağlayıcı işlemlerde yetkili idarenin güncel kaydı esastır.

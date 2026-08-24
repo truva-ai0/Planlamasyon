@@ -1,18 +1,18 @@
-# Planlamasyon v3.2.4 — Çalışan TKGM Akışının Cloudflare'a Birebir Taşınması
+# Planlamasyon v3.2.5 — Hızlı ve Kesilmeyen Analiz Akışı
 
-Bu sürümde hedef yeni bir TKGM sistemi icat etmek değil, **v3.2 / Netlify sürümünde çalışan parsel akışını Cloudflare üzerinde aynı arayüz ve aynı API cevabı ile çalıştırmaktır.**
+Bu sürüm **v3.2.4'te çalışan TKGM köprüsünü aynen korur**. Değişiklik, parsel bulunduktan sonra imar/çevre/açık kaynak taramasının bir servis yüzünden sürekli “Hazırlanıyor / Taranıyor” durumunda kalmasını önler.
 
 ## Neler değişti?
 
-- Ön yüzdeki `/api/tkgm?action=...` akışı değişmedi.
-- Netlify tarafında v3.2'de çalışan `tkgm-client` ve `tkgm-api` geri getirildi.
-- Cloudflare tarafında `/api/tkgm` artık Netlify uyumluluk katmanından geçmeden **doğrudan Worker içinde** çalışır.
-- İl / ilçe / mahalle-köy için TKGM'nin açık `megsiswebapi.v3` idari yolları ilk kaynak olarak kullanılır.
-- Ada/parsel ve koordinat sorgusunda `megsiswebapi.v3.1` parsel yolu ilk kaynak olarak kullanılır.
-- TKGM Parsel Sorgu'nun kamu web istemcisiyle uyumlu `User-Agent`, `Accept`, `Referer` ve `Origin` başlıkları gönderilir.
-- Aynı JSON/GeoJSON sonuçları mevcut Planlamasyon normalleştiricisine verilir; UI, gerçek harita ve analiz akışı değişmez.
-- NVIDIA `stepfun-ai/step-3.7-flash` Plan AI, resmî kaynak taraması, belediye kataloğu ve mevcut v3.2 özellikleri korunur.
-- Cloudflare `NVIDIA_API_KEY` Secret değeri `keep_vars = true` nedeniyle deploylar arasında korunur.
+- TKGM il → ilçe → mahalle/köy → ada/parsel → gerçek geometri akışı değiştirilmedi.
+- İmar analizi artık kontrollü bir toplam süre içinde sonuç döndürür.
+- e-Plan, TUCBS, belediye açık veri, plan kaydı, çevre ve Plan AI istekleri için ayrı süre sınırları vardır.
+- Bir kaynak cevap vermediğinde **diğer bulunan bilgiler yine gösterilir**.
+- Yanıt vermeyen bölüm “alınamadı / süre sınırı” olarak işaretlenir; bütün sonuç ekranı sonsuza kadar dönmez.
+- Açık resmî kaynak taraması ile Plan AI paralel yürütülür; biri yavaşsa diğerini bekletmez.
+- Yakın çevre analizi ilk sonuçta en fazla birkaç saniye beklenir; çevre servisi yavaşsa parsel ve imar sonucu bundan etkilenmez.
+- Tarayıcı tarafında da son güvenlik olarak analiz isteğine 22 saniyelik üst sınır eklenmiştir.
+- NVIDIA `stepfun-ai/step-3.7-flash`, `NVIDIA_API_KEY` Secret ve Cloudflare `keep_vars = true` korunur.
 
 ## Cloudflare kurulumu
 
@@ -28,22 +28,27 @@ Deploy command:
 npx wrangler deploy
 ```
 
-Cloudflare runtime secret:
+Runtime Secret:
 
 ```text
 NVIDIA_API_KEY
 ```
 
-## Canlı test sırası
+## Beklenen davranış
 
-1. `https://planlamasyon.truvaai0.workers.dev/api/tkgm?action=status`
-2. `https://planlamasyon.truvaai0.workers.dev/api/tkgm?action=provinces`
-3. Siteyi açıp il → ilçe → mahalle/köy seçimlerini test edin.
-4. Sonra gerçek ada/parsel sorgusu yapın.
-5. Parsel bulunduğunda Plan AI'yi test edin.
+1. TKGM parseli bulur ve haritada gösterir.
+2. İmar/plan/çevre kaynakları kontrollü süre içinde paralel kontrol edilir.
+3. Bulunan veri hemen sonuç ekranına girer.
+4. Cevap vermeyen kaynak bütün ekranı kilitlemez; “yanıt vermedi / daha sonra tekrar denenebilir” şeklinde görünür.
+5. Kaynakta gerçek TAKS, emsal, kat, Yençok veya çekme mesafesi varsa hesap yapılır; yoksa değer uydurulmaz.
 
-`provinces` cevabında 81 ilin gelmesi, Cloudflare TKGM köprüsünün ilk kabul testidir.
+## Canlı test
 
-## Doğruluk
+- `/api/tkgm?action=provinces` → TKGM bağlantısı
+- Site: İstanbul → Şişli → Mecidiyeköy → 1946 / 70
+- Parsel bulunduktan sonra sonuç ekranının 20 saniyeden uzun “Hazırlanıyor”da kalmaması
+- Plan AI kartında NVIDIA yapılandırmasının görünmesi
 
-TKGM'den gelen temel kadastro verileri bilgi amaçlıdır. Planlamasyon kapalı oturumları aşmaz ve kaynakta bulunmayan imar değerlerini üretmez.
+## Not
+
+TKGM temel kadastro verileri bilgi amaçlıdır. İmar ve ruhsat açısından bağlayıcı işlem öncesinde yetkili idarenin güncel kaydı esastır.

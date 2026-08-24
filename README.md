@@ -1,20 +1,32 @@
-# Planlamasyon v3.2.5 — Hızlı ve Kesilmeyen Analiz Akışı
+# Planlamasyon v3.2.6 — Gerçek İmar Sayfası Okuma + Plan AI Düzeltmesi
 
-Bu sürüm **v3.2.4'te çalışan TKGM köprüsünü aynen korur**. Değişiklik, parsel bulunduktan sonra imar/çevre/açık kaynak taramasının bir servis yüzünden sürekli “Hazırlanıyor / Taranıyor” durumunda kalmasını önler.
+Bu sürüm **v3.2.5'te çalışan TKGM + Cloudflare altyapısını korur**. Ana hedef, resmî belediye imar sayfası açık olduğu halde TAKS / emsal / kat / Yençok / yapı nizamı / bahçe mesafelerinin okunamaması ve Plan AI'nin Cloudflare'da “Beklenmeyen sunucu hatası” vermesini düzeltmektir.
 
-## Neler değişti?
+## v3.2.6'da değişenler
 
 - TKGM il → ilçe → mahalle/köy → ada/parsel → gerçek geometri akışı değiştirilmedi.
-- İmar analizi artık kontrollü bir toplam süre içinde sonuç döndürür.
-- e-Plan, TUCBS, belediye açık veri, plan kaydı, çevre ve Plan AI istekleri için ayrı süre sınırları vardır.
-- Bir kaynak cevap vermediğinde **diğer bulunan bilgiler yine gösterilir**.
-- Yanıt vermeyen bölüm “alınamadı / süre sınırı” olarak işaretlenir; bütün sonuç ekranı sonsuza kadar dönmez.
-- Açık resmî kaynak taraması ile Plan AI paralel yürütülür; biri yavaşsa diğerini bekletmez.
-- Yakın çevre analizi ilk sonuçta en fazla birkaç saniye beklenir; çevre servisi yavaşsa parsel ve imar sonucu bundan etkilenmez.
-- Tarayıcı tarafında da son güvenlik olarak analiz isteğine 22 saniyelik üst sınır eklenmiştir.
-- NVIDIA `stepfun-ai/step-3.7-flash`, `NVIDIA_API_KEY` Secret ve Cloudflare `keep_vars = true` korunur.
+- Şişli Belediyesi için açık **Web İmar Durum Uygulaması** doğrudan resmî kaynak adayı olarak önceliklendirildi.
+- Açık belediye e-imar sayfasında ada/parsel formu varsa Planlamasyon:
+  1. sayfayı açar,
+  2. gizli form alanlarını korur,
+  3. sorgulanan ada/parseli forma yazar,
+  4. sonucu aynı belediye sunucusundan alır,
+  5. sonuçta **aynı ada ve parsel açıkça görülüyorsa** imar metnini okur.
+- Form sonucu için ASP.NET oturum çerezi gerekiyorsa ilk sayfadan gelen çerez aynı resmî sunucuya iletilir.
+- Yanlış parsele ait bir sonuçta TAKS / emsal gibi değerler **asla uygulanmaz**.
+- Resmî sonuç metninde doğrudan okunabilen değerler normal hesap motoruna aktarılır.
+- Doğrudan ayrıştırılamayan ama doğru parsele ait resmî metin, tekrar indirilmeden **NVIDIA Plan AI** kanıtına aktarılır.
+- Açık kaynak taraması artık Plan AI'den önce çalışır; böylece Plan AI gerçek tarama sonucunu görür.
+- Cloudflare Worker ortamında Node `Buffer` bulunmamasından kaynaklanan Plan AI POST hatası giderildi (`TextEncoder` / `TextDecoder` uyumlu gövde okuyucu).
+- NVIDIA 401/403, 429, 404 ve timeout durumlarında artık “Beklenmeyen sunucu hatası” yerine anlaşılır hata mesajı döner.
+- Analiz yine süre sınırlıdır; yavaş bir kaynak bütün ekranı sonsuza kadar bekletmez.
+- Yakın çevre için Overpass yedek sunucu listesi genişletildi.
 
-## Cloudflare kurulumu
+## Güvenlik kuralı
+
+Bir belediye sayfasından değer ancak sorgulanan **ada + parsel sonucu sayfada açıkça eşleşirse** hesaplamaya alınır. Kaynakta olmayan değer tahmin edilmez.
+
+## Cloudflare
 
 Build command:
 
@@ -34,21 +46,14 @@ Runtime Secret:
 NVIDIA_API_KEY
 ```
 
-## Beklenen davranış
+`wrangler.toml` içinde `keep_vars = true` bulunduğu için GitHub'dan yeni deploy geldiğinde Cloudflare Secret korunur.
 
-1. TKGM parseli bulur ve haritada gösterir.
-2. İmar/plan/çevre kaynakları kontrollü süre içinde paralel kontrol edilir.
-3. Bulunan veri hemen sonuç ekranına girer.
-4. Cevap vermeyen kaynak bütün ekranı kilitlemez; “yanıt vermedi / daha sonra tekrar denenebilir” şeklinde görünür.
-5. Kaynakta gerçek TAKS, emsal, kat, Yençok veya çekme mesafesi varsa hesap yapılır; yoksa değer uydurulmaz.
+## Canlı test sırası
 
-## Canlı test
+1. `/api/tkgm?action=provinces` → TKGM il verisi gelmeli.
+2. İstanbul → Şişli → Mecidiyeköy → 1946 / 70 → parsel yine bulunmalı.
+3. Resmî kaynak taramasında Şişli Web İmar Durum Uygulaması ilk adaylardan biri olarak denenmeli.
+4. Kaynakta yapılaşma değeri varsa otomatik doldurulmalı; yoksa `Doğrulanamadı` kalmalı.
+5. Plan AI'ye soru sorulduğunda NVIDIA hatası varsa gerçek hata türü görünmeli; API sağlıklıysa cevap dönmeli.
 
-- `/api/tkgm?action=provinces` → TKGM bağlantısı
-- Site: İstanbul → Şişli → Mecidiyeköy → 1946 / 70
-- Parsel bulunduktan sonra sonuç ekranının 20 saniyeden uzun “Hazırlanıyor”da kalmaması
-- Plan AI kartında NVIDIA yapılandırmasının görünmesi
-
-## Not
-
-TKGM temel kadastro verileri bilgi amaçlıdır. İmar ve ruhsat açısından bağlayıcı işlem öncesinde yetkili idarenin güncel kaydı esastır.
+> Not: TKGM kadastro ve belediye web imar sonuçları bilgi amaçlıdır. Ruhsat ve bağlayıcı işlemde yetkili idarenin güncel resmî belgesi esastır.

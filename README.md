@@ -1,4 +1,18 @@
-# Planlamasyon v3.2.7 — Kanıtlı İmar Akışı ve Dayanıklı Plan AI
+# Planlamasyon v3.2.8 — Mobil Harita ve Dayanıklı Canlı Servisler
+
+## v3.2.8 düzeltmeleri
+
+- Mobil haritada varsayılan katman daha dayanıklı OpenStreetMap katmanına alındı; parsel çiziminden sonra harita boyutu ve sınırları yeniden hesaplanır.
+- Mobil Plan AI paneli tam genişlikte, içerik kadar açılan ve uzun içerikte kaydırılabilen alt panele dönüştürüldü.
+- Açık resmî kaynak tarama süresi ve eşzamanlı bağlantı sayısı artırıldı; yarım kalan taramalar daha az görülür.
+- Plan AI bekleme süresi ve NVIDIA 202 durum sorgulama aralığı gerçek servis gecikmelerine göre düzenlendi; cevap uzunluğu hız için sınırlandı.
+- Yakın çevre sorgusu 1,5 km yarıçapta hızlandırıldı ve Overpass yanıt vermediğinde Nominatim yedeği etkinleştirildi.
+- Güncel e-Plan adresi `eplan.csb.gov.tr` olarak değiştirildi.
+- Kadastro niteliği arsa olmayan taşınmazlarda yanıltıcı “arsa” ifadesi yerine “parsel” dili kullanılır.
+
+> Belediye portalı otomatik sorguya izin vermiyorsa sistem güvenlik ve kullanım koşulları nedeniyle değer uydurmaz; resmî manuel sorgu veya güncel imar belgesi gerekir.
+
+# Önceki sürüm: Planlamasyon v3.2.7 — Kanıtlı İmar Akışı ve Dayanıklı Plan AI
 
 Bu sürüm TKGM il → ilçe → mahalle/köy → ada/parsel → gerçek geometri akışını korur; açık resmî kaynak okuma, imar hesabı ve NVIDIA Plan AI katmanlarını güvenli biçimde tamamlar.
 

@@ -1,59 +1,78 @@
-# Planlamasyon v3.2.6 — Gerçek İmar Sayfası Okuma + Plan AI Düzeltmesi
+# Planlamasyon v3.2.7 — Kanıtlı İmar Akışı ve Dayanıklı Plan AI
 
-Bu sürüm **v3.2.5'te çalışan TKGM + Cloudflare altyapısını korur**. Ana hedef, resmî belediye imar sayfası açık olduğu halde TAKS / emsal / kat / Yençok / yapı nizamı / bahçe mesafelerinin okunamaması ve Plan AI'nin Cloudflare'da “Beklenmeyen sunucu hatası” vermesini düzeltmektir.
+Bu sürüm TKGM il → ilçe → mahalle/köy → ada/parsel → gerçek geometri akışını korur; açık resmî kaynak okuma, imar hesabı ve NVIDIA Plan AI katmanlarını güvenli biçimde tamamlar.
 
-## v3.2.6'da değişenler
+## Bu sürümde düzeltilenler
 
-- TKGM il → ilçe → mahalle/köy → ada/parsel → gerçek geometri akışı değiştirilmedi.
-- Şişli Belediyesi için açık **Web İmar Durum Uygulaması** doğrudan resmî kaynak adayı olarak önceliklendirildi.
-- Açık belediye e-imar sayfasında ada/parsel formu varsa Planlamasyon:
-  1. sayfayı açar,
-  2. gizli form alanlarını korur,
-  3. sorgulanan ada/parseli forma yazar,
-  4. sonucu aynı belediye sunucusundan alır,
-  5. sonuçta **aynı ada ve parsel açıkça görülüyorsa** imar metnini okur.
-- Form sonucu için ASP.NET oturum çerezi gerekiyorsa ilk sayfadan gelen çerez aynı resmî sunucuya iletilir.
-- Yanlış parsele ait bir sonuçta TAKS / emsal gibi değerler **asla uygulanmaz**.
-- Resmî sonuç metninde doğrudan okunabilen değerler normal hesap motoruna aktarılır.
-- Doğrudan ayrıştırılamayan ama doğru parsele ait resmî metin, tekrar indirilmeden **NVIDIA Plan AI** kanıtına aktarılır.
-- Açık kaynak taraması artık Plan AI'den önce çalışır; böylece Plan AI gerçek tarama sonucunu görür.
-- Cloudflare Worker ortamında Node `Buffer` bulunmamasından kaynaklanan Plan AI POST hatası giderildi (`TextEncoder` / `TextDecoder` uyumlu gövde okuyucu).
-- NVIDIA 401/403, 429, 404 ve timeout durumlarında artık “Beklenmeyen sunucu hatası” yerine anlaşılır hata mesajı döner.
-- Analiz yine süre sınırlıdır; yavaş bir kaynak bütün ekranı sonsuza kadar bekletmez.
-- Yakın çevre için Overpass yedek sunucu listesi genişletildi.
+- Açık WMS/WFS, ArcGIS ve JSON imar katmanları ile izinli/yetkili belediye adaptörleri aynı tarama kuyruğunda işlenir.
+- Doğrudan açılan resmî sonuç sayfasındaki TAKS, emsal, kat, Yençok, yapı nizamı ve bahçe mesafeleri yalnız sorgulanan ada/parsel metinde açıkça eşleşirse kullanılır.
+- Kullanım koşulları otomatik sorguya izin vermeyen veya giriş isteyen portallar `manual-only` olarak gösterilir; kullanıcı resmî sayfaya yönlendirilir.
+- Form gönderimi yalnız kaynak yapılandırmasında `automatedQueryAllowed: true` açıkça verilmiş izinli entegrasyonlarda yapılır.
+- Zaman aşımı, erişim hatası ve yarım kalan taramalar “sonuç yok” diye 30 dakika önbelleğe alınmaz.
+- “Kalan Kaynakları Yeniden Tara” düğmesi bütün imar/plan kaynak önbelleklerini o istek için gerçekten atlar.
+- Çelişmeyen farklı resmî kayıtlardaki tamamlayıcı alanlar birleştirilir; her alanın kaynak izi korunur. Aynı alan için uyuşmazlık varsa hesap durdurulur.
+- Şişli tipi ayraçsız `Plan Fonksiyon`, `Kat Adedi`, `İnşaat Nizamı` satırları okunur. `Yençok: 25 kat` artık yanlışlıkla `25 m` yükseklik sayılmaz.
+- Belge/PDF okuyucunun Cloudflare Worker ortamı için `nodejs_compat` bayrağı etkinleştirildi.
+- NVIDIA `stepfun-ai/step-3.7-flash` çağrısında 202 yanıtı resmî durum uç noktasından sınırlı süreyle izlenir; ağ, zaman aşımı, kota ve anahtar hataları kodlanır.
+- Model kuralları `system`, belge/soru içeriği `user` mesajında gönderilir ve aynı çağrıda hem `temperature` hem `top_p` değiştirilmez.
+- Modelin kendi başına “ada/parsel eşleşti” demesi yeterli değildir. Hesaba giren kritik değer, deterministik olarak eşleşmiş aynı resmî kanıttaki alıntıyla doğrulanmalıdır.
+- Plan AI servisi geçici olarak çalışmazsa sohbet 500 hatası vermez; mevcut analizdeki doğrulanmış alanları ve eksikleri kullanan, değer uydurmayan `verified-fallback` cevap döner.
 
-## Güvenlik kuralı
+## Doğrulama ve hesap ilkeleri
 
-Bir belediye sayfasından değer ancak sorgulanan **ada + parsel sonucu sayfada açıkça eşleşirse** hesaplamaya alınır. Kaynakta olmayan değer tahmin edilmez.
+TKGM kaydı parselin konumunu, geometrisini ve temel kadastro bilgisini verir; tek başına imar hakkı değildir. Yaklaşık sonuçlar yalnız doğrulanmış imar alanlarıyla üretilir:
 
-## Cloudflare
+- yaklaşık taban oturumu = parsel alanı × TAKS
+- yaklaşık emsale esas toplam alan = parsel alanı × emsal
+- yaklaşık açık alan = parsel alanı − taban oturumu
+- kat bilgisi, Yençok ve plan notları ayrıca gösterilir; birbirinin yerine tahmin edilmez
 
-Build command:
+Kaynaktan gelmeyen değer doldurulmaz. “Doğrulanamadı” durumu, yanlış kesinlik üretmek yerine resmî sayfa/belge veya yetkili adaptör gerektiğini belirtir. Ruhsat ve bağlayıcı işlemde yetkili idarenin güncel imar durum belgesi esastır.
+
+## İzinli belediye kaynağı yapılandırması
+
+`OPEN_OFFICIAL_ZONING_SOURCES_JSON` bir WMS/WFS/ArcGIS/JSON kaynağı veya belediyeden kullanım izni alınmış portal adaptörü tanımlayabilir. Portal formu için izin açıkça belirtilmelidir:
+
+```json
+[
+  {
+    "id": "yetkili-belediye-adaptoru",
+    "province": "İstanbul",
+    "district": "Örnek İlçe",
+    "title": "Belediye İmar Servisi",
+    "provider": "Örnek Belediyesi",
+    "kind": "portal",
+    "url": "https://imar.example.bel.tr/sorgu",
+    "automatedQueryAllowed": true,
+    "priority": 150
+  }
+]
+```
+
+Kurumsal JSON API kullanılıyorsa `MUNICIPALITY_CONNECTORS_JSON`, `EPLAN_ADAPTER_URL` veya `PLANLAMASYON_ZONING_API_URL` seçenekleri de kullanılabilir.
+
+## Cloudflare kurulumu
 
 ```text
 npm run build
-```
-
-Deploy command:
-
-```text
+npm test
 npx wrangler deploy
 ```
 
-Runtime Secret:
+Gerekli Secret:
 
 ```text
 NVIDIA_API_KEY
 ```
 
-`wrangler.toml` içinde `keep_vars = true` bulunduğu için GitHub'dan yeni deploy geldiğinde Cloudflare Secret korunur.
+`wrangler.toml` içindeki `keep_vars = true` yeni dağıtımda mevcut Secret değerlerini korur.
 
-## Canlı test sırası
+## Canlı doğrulama sırası
 
-1. `/api/tkgm?action=provinces` → TKGM il verisi gelmeli.
-2. İstanbul → Şişli → Mecidiyeköy → 1946 / 70 → parsel yine bulunmalı.
-3. Resmî kaynak taramasında Şişli Web İmar Durum Uygulaması ilk adaylardan biri olarak denenmeli.
-4. Kaynakta yapılaşma değeri varsa otomatik doldurulmalı; yoksa `Doğrulanamadı` kalmalı.
-5. Plan AI'ye soru sorulduğunda NVIDIA hatası varsa gerçek hata türü görünmeli; API sağlıklıysa cevap dönmeli.
+1. `/api/tkgm?action=provinces` ile TKGM akışını doğrulayın.
+2. Bir parsel seçip kaynak taramasını çalıştırın.
+3. Açık/izinli kaynakta değer varsa imar özeti ve yaklaşık hesapları; kaynak yoksa resmî bağlantı ve eksik alanları kontrol edin.
+4. “Kalan Kaynakları Yeniden Tara” ile önbelleksiz taramayı doğrulayın.
+5. Plan AI’ye hem sayısal hem “eksikler neler?” sorusu sorun; NVIDIA kullanılamıyorsa `verified-fallback` cevabını kontrol edin.
 
-> Not: TKGM kadastro ve belediye web imar sonuçları bilgi amaçlıdır. Ruhsat ve bağlayıcı işlemde yetkili idarenin güncel resmî belgesi esastır.
+> Testlerdeki HTML/PDF içerikleri ayrıştırıcı fikstürüdür; herhangi bir gerçek parselin güncel imar hakkı olarak kullanılmaz.

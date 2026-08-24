@@ -1,20 +1,20 @@
-# Planlamasyon v3.2.3 — Cloudflare TKGM Köprüsü
+# Planlamasyon v3.2.4 — Çalışan TKGM Akışının Cloudflare'a Birebir Taşınması
 
-Bu sürüm Cloudflare Worker üzerinde görülen **“TKGM servisine ulaşılamadı / İller yükleniyor”** sorununa odaklanır. v3.2.2’deki Worker + Static Assets ve NVIDIA Plan AI yapısı korunur.
+Bu sürümde hedef yeni bir TKGM sistemi icat etmek değil, **v3.2 / Netlify sürümünde çalışan parsel akışını Cloudflare üzerinde aynı arayüz ve aynı API cevabı ile çalıştırmaktır.**
 
-## Ana düzeltmeler
+## Neler değişti?
 
-- Cloudflare `env` değerleri Netlify uyumlu sunucu modüllerine açıkça aktarılır; `NVIDIA_API_KEY` ve diğer runtime ayarları aynı kodda doğru okunur.
-- TKGM istekleri TKGM Parsel Sorgu’nun kullandığı açık web bağlamı başlıklarıyla (`Origin`, `Referer`, `X-Requested-With`) gönderilir.
-- İl listesinde TKGM’nin açık statik dizini ilk kaynak olarak kullanılır.
-- İlçe, mahalle/köy ve parsel için birden fazla resmî TKGM CBS adresi sırayla denenir.
-- Ada/parsel sorgusunda erişilebilen eski açık geometri yolu da yedek olarak denenir; giriş veya özel oturum taklit edilmez.
-- Geçici 429/5xx/ağ hatalarında hem sunucu hem tarayıcı katmanında kısa otomatik yeniden deneme uygulanır.
-- TKGM hata yanıtı artık hangi açık yolların denendiğine dair tanı bilgisi taşıyabilir.
-- Statik `app.js` ve `styles.css` sürüm parametresi `3.2.3` yapıldı; eski tarayıcı önbelleğinin yeni kodu gizlemesi engellenir.
-- `wrangler.toml` içinde `keep_vars = true`; Cloudflare Dashboard’dan girilen normal runtime değişkenleri sonraki deploylarda korunur. Secret değerler zaten Cloudflare tarafından şifreli tutulur.
+- Ön yüzdeki `/api/tkgm?action=...` akışı değişmedi.
+- Netlify tarafında v3.2'de çalışan `tkgm-client` ve `tkgm-api` geri getirildi.
+- Cloudflare tarafında `/api/tkgm` artık Netlify uyumluluk katmanından geçmeden **doğrudan Worker içinde** çalışır.
+- İl / ilçe / mahalle-köy için TKGM'nin açık `megsiswebapi.v3` idari yolları ilk kaynak olarak kullanılır.
+- Ada/parsel ve koordinat sorgusunda `megsiswebapi.v3.1` parsel yolu ilk kaynak olarak kullanılır.
+- TKGM Parsel Sorgu'nun kamu web istemcisiyle uyumlu `User-Agent`, `Accept`, `Referer` ve `Origin` başlıkları gönderilir.
+- Aynı JSON/GeoJSON sonuçları mevcut Planlamasyon normalleştiricisine verilir; UI, gerçek harita ve analiz akışı değişmez.
+- NVIDIA `stepfun-ai/step-3.7-flash` Plan AI, resmî kaynak taraması, belediye kataloğu ve mevcut v3.2 özellikleri korunur.
+- Cloudflare `NVIDIA_API_KEY` Secret değeri `keep_vars = true` nedeniyle deploylar arasında korunur.
 
-## Cloudflare
+## Cloudflare kurulumu
 
 Build command:
 
@@ -28,12 +28,22 @@ Deploy command:
 npx wrangler deploy
 ```
 
-Runtime secret adı:
+Cloudflare runtime secret:
 
 ```text
 NVIDIA_API_KEY
 ```
 
-## Güvenlik ve sınır
+## Canlı test sırası
 
-TKGM için yalnızca kamuya açık web/CBS uç noktaları denenir. Kod e-Devlet oturumu üretmez, giriş engelini aşmaya çalışmaz ve özel kimlik bilgisi uydurmaz. Bir TKGM uç noktası gerçekten giriş gerektirirse sonuç bunu açıkça belirtir.
+1. `https://planlamasyon.truvaai0.workers.dev/api/tkgm?action=status`
+2. `https://planlamasyon.truvaai0.workers.dev/api/tkgm?action=provinces`
+3. Siteyi açıp il → ilçe → mahalle/köy seçimlerini test edin.
+4. Sonra gerçek ada/parsel sorgusu yapın.
+5. Parsel bulunduğunda Plan AI'yi test edin.
+
+`provinces` cevabında 81 ilin gelmesi, Cloudflare TKGM köprüsünün ilk kabul testidir.
+
+## Doğruluk
+
+TKGM'den gelen temel kadastro verileri bilgi amaçlıdır. Planlamasyon kapalı oturumları aşmaz ve kaynakta bulunmayan imar değerlerini üretmez.

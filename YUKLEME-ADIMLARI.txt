@@ -1,0 +1,20 @@
+Planlamasyon v3.2.4 Cloudflare güncellemesi
+
+GitHub'daki mevcut Planlamasyon reposuna şu 5 dosyayı yükleyin:
+- build.mjs
+- package.json
+- netlify.toml
+- README.md
+- wrangler.toml
+
+Commit mesajı:
+Planlamasyon v3.2.4 çalışan TKGM akışını Cloudflare'a taşı
+
+Cloudflare GitHub'a bağlı olduğu için commit sonrası otomatik build/deploy başlar.
+NVIDIA_API_KEY Secret değerini yeniden eklemeyin; wrangler.toml keep_vars=true ile mevcut Secret korunur.
+
+İlk canlı test:
+/api/tkgm?action=status
+/api/tkgm?action=provinces
+
+provinces cevabında 81 il geldikten sonra site içinde il/ilçe/mahalle ve gerçek ada/parsel testine geçin.

@@ -1,6 +1,6 @@
 {
-  "name": "planlamasyon-dual-host",
-  "version": "3.2.3",
+  "name": "planlamasyon-cloudflare",
+  "version": "3.2.4",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check dist/app.js && node --check netlify/functions/analyze.mjs && node --check netlify/functions/tkgm.mjs && node --check netlify/functions/health.mjs && node --check netlify/functions/official-services.mjs && node --check netlify/functions/plan-records.mjs && node --check netlify/functions/parse-zoning-document.mjs && node --check netlify/functions/open-source-scan.mjs && node --check netlify/functions/lib/zoning-client.mjs && node --check netlify/functions/lib/open-official-source-client.mjs && node --check netlify/functions/lib/environment-client.mjs && node --check netlify/functions/lib/plan-context-client.mjs && node --check netlify/functions/lib/plan-record-client.mjs && node --check netlify/functions/lib/municipality-provider.mjs && node --check netlify/functions/lib/municipality-catalog.mjs && node --check netlify/functions/lib/analysis-core.mjs && node --check netlify/functions/lib/zoning-document-parser.mjs && node --check netlify/functions/plan-ai.mjs && node --check netlify/functions/lib/plan-ai-client.mjs && node --check src/worker.js",
+    "check": "node --check dist/app.js && node --check netlify/functions/analyze.mjs && node --check netlify/functions/tkgm.mjs && node --check netlify/functions/health.mjs && node --check netlify/functions/official-services.mjs && node --check netlify/functions/plan-records.mjs && node --check netlify/functions/parse-zoning-document.mjs && node --check netlify/functions/open-source-scan.mjs && node --check netlify/functions/lib/zoning-client.mjs && node --check netlify/functions/lib/open-official-source-client.mjs && node --check netlify/functions/lib/environment-client.mjs && node --check netlify/functions/lib/plan-context-client.mjs && node --check netlify/functions/lib/plan-record-client.mjs && node --check netlify/functions/lib/municipality-provider.mjs && node --check netlify/functions/lib/municipality-catalog.mjs && node --check netlify/functions/lib/analysis-core.mjs && node --check netlify/functions/lib/zoning-document-parser.mjs && node --check netlify/functions/plan-ai.mjs && node --check netlify/functions/lib/plan-ai-client.mjs && node --check src/worker.js && node --check src/tkgm-cloudflare.js",
     "build": "node build.mjs"
   }
 }

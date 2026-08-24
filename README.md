@@ -10,6 +10,11 @@
 - Beşiktaş KEOS/Netcad sonucu yalnız kullanıcının resmî portaldan aldığı HTML dosyasını yüklemesi/yapıştırması ve açık onay vermesiyle çevrimdışı ayrıştırılır. Ada/parsel birebir eşleşmezse hiçbir değer uygulanmaz; boş TAKS, emsal, kat veya bahçe alanı tahmin edilmez.
 - 816/35 fikstürü; plan adı, Konut Alanı, 1/1000 ölçek, 09.08.2007 plan tasdik tarihi ve 12,50 m bina yüksekliği alanlarını okuma motoruna karşı test eder. Bunlar canlı portalın otomatik çekildiği anlamına gelmez.
 
+## Dağıtım
+
+- Üretim adresi: `https://planlamasyon.truvaai0.workers.dev/`
+- Cloudflare üretim dağıtımı GitHub `main` dalını izler.
+
 ## İzin ve ticari kullanım sınırı
 
 Halka açık bir sonuç sayfası teknik olarak açılabiliyor olsa bile bu, üçüncü taraf otomatik işleme veya ticari yeniden yayımlama izni anlamına gelmez. Beşiktaş Belediyesi’nin yayımladığı koşullar üçüncü taraf otomasyonunu yasakladığı için bu bağlantı yalnız kullanıcı tarafından açılır. Otomatik entegrasyon ancak belediye ve gerekiyorsa yazılım/veri sahibinden yazılı izin veya lisanslı API alındığında etkinleştirilmelidir.

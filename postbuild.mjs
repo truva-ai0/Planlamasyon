@@ -46,7 +46,7 @@ await replaceRequired('dist/app.js', [
     setTimeout(refreshParcelMap, 900);
     const center = parcelBounds.getCenter();`
   ],
-  ['}, { signal: controller.signal, timeoutMs: 25_000 });', '}, { signal: controller.signal, timeoutMs: 55_000 });'],
+  ['}, { signal: controller.signal, timeoutMs: 25_000 });', '}, { signal: controller.signal, timeoutMs: 65_000 });'],
   ["{ timeoutMs: 15_000 });", "{ timeoutMs: 35_000 });"],
   ['Bu arsaya yaklaşık kaç metrekare inşaat yapılabilir?', 'Bu parselde yaklaşık kaç metrekare inşaat yapılabilir?'],
   ['Bu arsada neler yapılabilir, kısa anlatır mısın?', 'Bu parselde neler yapılabilir, kısa anlatır mısın?'],
@@ -71,10 +71,19 @@ await replaceRequired('netlify/functions/analyze.mjs', [
   ['OVERPASS_TOTAL_TIMEOUT_MS: 5000,', 'OVERPASS_TOTAL_TIMEOUT_MS: 8000,'],
   ['OVERPASS_TIMEOUT_MS: 1700,', 'OVERPASS_TIMEOUT_MS: 3500,'],
   ["NOMINATIM_FALLBACK_ENABLED: 'false'", "NOMINATIM_FALLBACK_ENABLED: 'true'"],
-  ['        19_000,', '        45_000,'],
+  ['        19_000,', '        60_000,'],
   ['        6_000,', '        20_000,'],
   ['İmar analizi 19 saniyelik süre sınırına ulaştı.', 'İmar analizi güvenli süre sınırına ulaştı.'],
   ['Yakın çevre servisi 6 saniye içinde yanıt vermedi;', 'Yakın çevre servisi süre içinde yanıt vermedi;']
+]);
+
+await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
+  ['    3800,', '    9000,'],
+  ['    4300,', '    10000,'],
+  ['    2800,', '    5000,'],
+  ['), 4700, () => null)', '), 8000, () => null)'],
+  ['    6200,', '    18000,'],
+  ['    6500,', '    26000,']
 ]);
 
 const css = await readFile('dist/styles.css', 'utf8');
@@ -120,7 +129,7 @@ test('v3.2.8 mobil harita ve istemci süreleri uygulandı', async () => {
   const app = await readFile('dist/app.js', 'utf8');
   assert.ok(app.includes('osm.addTo(map)'));
   assert.match(app, /refreshParcelMap/);
-  assert.match(app, /timeoutMs: 55_000/);
+  assert.match(app, /timeoutMs: 65_000/);
   assert.match(app, /timeoutMs: 35_000/);
 });
 
@@ -129,7 +138,7 @@ test('v3.2.8 canlı servis bütçeleri ve mobil panel uygulandı', async () => {
   const css = await readFile('dist/styles.css', 'utf8');
   assert.match(analyze, /OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 16000/);
   assert.match(analyze, /PLAN_AI_TIMEOUT_MS: 24000/);
-  assert.match(analyze, /45_000/);
+  assert.match(analyze, /60_000/);
   assert.match(css, /v3\.2\.8 mobile reliability/);
   assert.match(css, /max-width:900px/);
 });

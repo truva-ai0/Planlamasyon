@@ -29,6 +29,9 @@ async function textFiles(directory) {
   return output;
 }
 
+const officialRouting = JSON.parse(await readFile('official-source-routing.json', 'utf8'));
+const routingPortals = officialRouting.portals;
+
 await replaceRequired('dist/app.js', [
   ['imagery.addTo(map);', 'osm.addTo(map);'],
   [
@@ -281,6 +284,87 @@ function renderOfficialServices(discovery = {}) {
 ]);
 
 await replaceRequired('dist/app.js', [
+  [
+    "<strong>Yapılaşma izni bulunmuş değildir.</strong><span>' + escapeHtml(parcelQualityWarning()) + '</span>",
+    "<strong>Yapılaşma izni doğrulanamadı.</strong><span>Bu, yapı yapılamayacağı anlamına gelmez. " + "' + escapeHtml(parcelQualityWarning()) + '</span>"
+  ],
+  [
+    String.raw`function normalizedDisplayKey(item = {}) {
+  const rawUrl = String(item.url || item.sourceUrl || '').trim();
+  if (rawUrl) {
+    try {
+      const url = new URL(rawUrl, location.origin);
+      url.hash = '';
+      url.search = '';
+      return 'url:' + url.origin.toLocaleLowerCase('tr-TR') + url.pathname.replace(/\/+$/, '').toLocaleLowerCase('tr-TR');
+    } catch {
+      return 'url:' + rawUrl.replace(/[?#].*$/, '').replace(/\/+$/, '').toLocaleLowerCase('tr-TR');
+    }
+  }
+  return 'text:' + [item.title, item.provider, item.kind].map((value) => String(value || '').trim().toLocaleLowerCase('tr-TR')).join('|');
+}`,
+    String.raw`function normalizedDisplayKey(item = {}) {
+  const rawUrl = String(item.url || item.sourceUrl || '').trim();
+  if (rawUrl) {
+    try {
+      const url = new URL(rawUrl, location.origin);
+      url.hash = '';
+      for (const key of [...url.searchParams.keys()]) {
+        if (/^(?:utm_.+|gclid|fbclid|mc_[ce]id)$/i.test(key)) url.searchParams.delete(key);
+      }
+      const sorted = [...url.searchParams.entries()].sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv));
+      url.search = '';
+      for (const [key, value] of sorted) url.searchParams.append(key, value);
+      const path = url.pathname.replace(/\/+$/, '') || '/';
+      return 'url:' + url.origin.toLocaleLowerCase('tr-TR') + path + url.search;
+    } catch {
+      return 'url:' + rawUrl.replace(/#.*$/, '').replace(/\/+$/, '');
+    }
+  }
+  return 'text:' + [item.title, item.provider, item.kind].map((value) => String(value || '').trim().toLocaleLowerCase('tr-TR')).join('|');
+}`
+  ],
+  [
+    `  const catalogText = catalog.embedded
+    ? \`Gömülü katalog: \${formatNumber(catalog.recordCount || 0)} kayıt · bu parsel için \${formatNumber(catalog.matchCount || 0)} belediye hizmeti eşleşti.\`
+    : null;`,
+    `  const catalogText = catalog.embedded
+    ? \`Türkiye geneli dinamik resmî yönlendirme hazır · bu konum için \${formatNumber(catalog.matchCount || 0)} doğrulanmış doğrudan hizmet eşleşti.\`
+    : 'Türkiye geneli resmî yönlendirme hazır.';`
+  ],
+  [
+    `    const isMunicipal = ['municipality-portal', 'municipality-geodata'].includes(primary.kind);
+    elements.primaryOfficialServiceLink.textContent = \`\${isMunicipal ? 'Belediye İmar Kaynağını' : 'Resmî İmar Kaynağını'} Aç ↗\`;`,
+    `    const isSearch = primary.accessMode === 'official-search';
+    const isMunicipal = ['municipality-portal', 'municipality-geodata'].includes(primary.kind);
+    elements.primaryOfficialServiceLink.textContent = isSearch
+      ? 'e-Devlet’te İmar Hizmetini Ara ↗'
+      : \`\${isMunicipal ? 'Yetkili İmar Sorgusunu' : 'Resmî İmar Kaynağını'} Aç ↗\`;`
+  ],
+  [
+    "    'municipality-portal': 'B', 'municipality-geodata': 'C', 'configured-adapter': '✓'",
+    "    'municipality-portal': 'B', 'municipality-geodata': 'C', 'configured-adapter': '✓', 'discovery-search': 'G', 'national-plan-directory': 'P'"
+  ],
+  [
+    "    'public-portal': 'Açık portal', 'official-service': 'Resmî hizmet'",
+    "    'public-portal': 'Açık portal', 'official-service': 'Resmî hizmet', 'discovery-only': 'Doğrulama araması', 'manual-only': 'Kullanıcı açar'"
+  ],
+  [
+    "    'national-portals-ready': 'Ulusal portallar hazır',\n    unavailable: 'Bağlantı bulunamadı'",
+    "    'national-portals-ready': 'Ulusal portallar hazır',\n    'manual-only': 'Resmî portalda açılmalı',\n    unavailable: 'Bağlantı bulunamadı'"
+  ],
+  ['  const visibleActions = actions.slice(0, 6);', '  const visibleActions = actions.slice(0, 8);'],
+  [
+    "setConnection('ok', 'TKGM parsel bağlantısı hazır', 'İl, ilçe, mahalle/köy ve gerçek parsel geometrisi canlı servisten alınır.');",
+    "setConnection('ok', 'Parsel sorgusu bilgi amaçlı hazır', 'Kadastro bağlantısı bilgi amaçlıdır; ticari/kurumsal veri kullanımı için TAKPAS ve ilgili kurum yetkileri gerekir.');"
+  ],
+  [
+    "terms: ['Kullanım Koşulları', 'Planlamasyon sonuçları bilgi amaçlıdır. Kesin imar durumu, sınır, aplikasyon, proje ve ruhsat işlemlerinde yetkili kurumların güncel ve yazılı kayıtları esas alınır.']",
+    "terms: ['Kullanım Koşulları', 'Planlamasyon sonuçları bilgi amaçlıdır. Kesin imar, sınır, aplikasyon, proje ve ruhsat işlemlerinde yetkili kurumların güncel yazılı kayıtları esastır. Bağlantı bulunması otomatik veri kullanım izni anlamına gelmez; ticari kadastro kullanımı için TAKPAS ve ilgili kurum yetkileri gerekir.']"
+  ]
+]);
+
+await replaceRequired('dist/app.js', [
   ['  syncTimer: null, syncInProgress: false\n};', '  syncTimer: null, syncInProgress: false, accountSyncEnabled: false\n};']
 ]);
 
@@ -357,6 +441,17 @@ await replaceRequired('dist/index.html', [
   ['<aside class="side-drawer" id="sideDrawer" hidden aria-label="Planlamasyon paneli">', '<aside class="side-drawer" id="sideDrawer" hidden role="dialog" aria-modal="true" aria-label="Planlamasyon paneli">']
 ]);
 
+await replaceRequired('dist/index.html', [
+  ['<span class="section-kicker">Son çare: belgeyle tamamlayın</span>', '<span class="section-kicker">Resmî doğrulama yolu</span>'],
+  ['<h3>Açık resmî kaynaklar tarandı; bazı yapılaşma değerleri bulunamadı</h3>', '<h3>Yapılaşma değerleri bulunamadı; yetkili sorguyu açın</h3>'],
+  [
+    '<p>Planlamasyon önce e-Devlet istemeyen açık resmî kaynakları otomatik tarar. Değer bulunamazsa güncel imar durumu, imar çapı ya da plan notunu isteğe bağlı olarak yükleyebilirsiniz. Belge yüklemek ana yöntem değil, son tamamlama yoludur.</p>',
+    '<p>Planlamasyon yalnız açık veya izinli kaynakları otomatik okur. Diğer resmî hizmetler kullanıcı tarafından açılır; bağlantı bulunması TAKS, emsal veya yapı izni doğrulandığı anlamına gelmez. İsterseniz güncel resmî belgeyle analizi tamamlayabilirsiniz.</p>'
+  ],
+  ['<strong>Bulunan resmî kaynakları göster</strong>', '<strong>Yetkili ve ulusal resmî yolları göster</strong>'],
+  ['<p>TKGM kaynaklı kadastro geometrisi ve temel bilgiler alınır.</p>', '<p>Kadastro geometrisi bilgi amaçlı alınır; ticari veri kullanımı gerekli kurum yetkilerine tabidir.</p>']
+]);
+
 await replaceRequired('netlify/functions/analyze.mjs', [
   ['OPEN_OFFICIAL_SOURCE_TIMEOUT_MS: 2600,', 'OPEN_OFFICIAL_SOURCE_TIMEOUT_MS: 6000,'],
   ['OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 5600,', 'OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 16000,'],
@@ -386,9 +481,322 @@ await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
   ['    6500,', '    26000,']
 ]);
 
+await replaceRequired('netlify/functions/lib/municipality-catalog.mjs', [[
+  `  "provinceCount": 29,
+  "nationalRecordCount": 5,`,
+  `  "provinceCount": 29,
+  "directProvinceCount": ${officialRouting.coverage.directCatalogProvinceCount},
+  "directDistrictPairCount": ${officialRouting.coverage.directCatalogDistrictPairCount},
+  "routingProvinceCount": ${officialRouting.coverage.provinceCount},
+  "nationwideRouting": true,
+  "routingMode": "${officialRouting.coverage.mode}",
+  "nationalRecordCount": 5,`
+]]);
+
+await replaceRequired('dist/data/municipality-official-services.json', [[
+  `    "provinceCount": 29,
+    "nationalRecordCount": 5,`,
+  `    "provinceCount": 29,
+    "directProvinceCount": ${officialRouting.coverage.directCatalogProvinceCount},
+    "directDistrictPairCount": ${officialRouting.coverage.directCatalogDistrictPairCount},
+    "routingProvinceCount": ${officialRouting.coverage.provinceCount},
+    "nationwideRouting": true,
+    "routingMode": "${officialRouting.coverage.mode}",
+    "nationalRecordCount": 5,`
+]]);
+await writeFile('dist/data/official-source-routing.json', `${JSON.stringify(officialRouting, null, 2)}\n`);
+
+await replaceRequired('netlify/functions/lib/municipality-provider.mjs', [
+  [
+    `const OFFICIAL_PORTALS = {
+  eplan: 'https://e-plan.gov.tr/e-plan/html/imarDurumu.html',
+  eplanHome: 'https://e-plan.gov.tr/',
+  tucbs: 'https://tucbs.gov.tr/',
+  tucbsOpenData: 'https://ucbp.tucbs.gov.tr/cografi-acik-veri-platformu',
+  eDevletSearch: 'https://www.turkiye.gov.tr/arama',
+  eDevletMunicipalities: 'https://www.turkiye.gov.tr/belediyeler'
+};`,
+    `const OFFICIAL_PORTALS = {
+  eplan: ${JSON.stringify(routingPortals.eplanImar)},
+  eplanHome: 'https://eplan.csb.gov.tr/',
+  eplanPlans: ${JSON.stringify(routingPortals.eplanPlans)},
+  tucbs: ${JSON.stringify(routingPortals.tucbs)},
+  tucbsOpenData: ${JSON.stringify(routingPortals.tucbsOpenData)},
+  eDevletSearch: ${JSON.stringify(routingPortals.eDevletSearch)},
+  eDevletMunicipalities: ${JSON.stringify(routingPortals.eDevletMunicipalities)},
+  googleSearch: ${JSON.stringify(routingPortals.googleSearch)}
+};`
+  ],
+  [
+    `    municipalServices.map((item) => item.id).join('|'),
+    configuredConnectors.map((item) => item.id).join('|')`,
+    `    municipalServices.map((item) => [item.id, canonicalUrlKey(item.url), item.accessMode, item.status].join('~')).join('|'),
+    configuredConnectors.map((item) => [item.id, canonicalUrlKey(item.publicUrl || item.sourceUrl || item.url), item.accessMode].join('~')).join('|')`
+  ],
+  [
+    `  const actions = [
+    ...nationalCatalogActions(),`,
+    `  const actions = [
+    ...nationalCatalogActions(),
+    ...locationRoutingActions(location),`
+  ],
+  [
+    `      url: safeHttpsUrl(connector.publicUrl || connector.sourceUrl || null),`,
+    `      url: safeHttpsUrl(connector.publicUrl || connector.sourceUrl || connector.url || null),`
+  ],
+  [
+    `  const finalActions = sortActions(dedupeActions(actions));`,
+    `  const finalActions = dedupeActions(actions);`
+  ],
+  [
+    `      selectedServiceCount: municipalServices.length,
+      publicCatalogUrl: '/data/municipality-official-services.json'`,
+    `      selectedServiceCount: municipalServices.length,
+      routingProvinceCount: 81,
+      nationwideRouting: true,
+      automaticDataClaim: false,
+      publicCatalogUrl: '/data/municipality-official-services.json',
+      publicRoutingUrl: '/data/official-source-routing.json'`
+  ],
+  [
+    `export function buildEDevletSearchUrl({ district, province } = {}) {
+  const parts = [district ? \`\${district} Belediyesi\` : null, 'İmar Durum Bilgisi Sorgulama', province].filter(Boolean);
+  const url = new URL(OFFICIAL_PORTALS.eDevletSearch);
+  url.searchParams.set('aranan', parts.join(' '));
+  return url.toString();
+}`,
+    `export function buildEDevletSearchUrl({ district, province } = {}) {
+  const parts = [district ? \`\${district} Belediyesi\` : null, 'İmar Durum Bilgisi Sorgulama', province].filter(Boolean);
+  const url = new URL(OFFICIAL_PORTALS.eDevletSearch);
+  url.searchParams.set('aranan', parts.join(' '));
+  return url.toString();
+}
+
+export function buildGoogleOfficialSearchUrl({ district, province, neighbourhood, block, parcel } = {}) {
+  const url = new URL(OFFICIAL_PORTALS.googleSearch);
+  const parcelRef = block && parcel ? \`ada \${block} parsel \${parcel}\` : null;
+  const parts = [district ? \`"\${district} Belediyesi"\` : null, province, neighbourhood, '"imar durumu"', parcelRef, 'site:bel.tr OR site:gov.tr'].filter(Boolean);
+  url.searchParams.set('q', parts.join(' '));
+  return url.toString();
+}
+
+function locationRoutingActions(location) {
+  const actions = [{
+    id: 'official-domain-google-discovery',
+    title: 'Resmî kurum sitelerinde imar kaynağı ara',
+    provider: 'Google resmî alan adı araması',
+    url: buildGoogleOfficialSearchUrl(location),
+    kind: 'discovery-search',
+    status: 'unverified-discovery',
+    accessMode: 'discovery-only',
+    note: 'Yalnız bel.tr ve gov.tr alan adlarında keşif araması açılır. Arama sonucu doğrulanmadan resmî veri veya otomatik sorgu kaynağı sayılmaz.',
+    machineReadableCandidate: false,
+    automatedQueryAllowed: false
+  }];
+  if (OFFICIAL_PORTALS.eplanPlans) actions.push({
+    id: 'eplan-public-plans',
+    title: 'Askıdaki ve yürürlükteki planları aç',
+    provider: 'e-Plan Otomasyon Sistemleri',
+    url: OFFICIAL_PORTALS.eplanPlans,
+    kind: 'national-plan-directory',
+    status: 'official-portal',
+    accessMode: 'public-portal',
+    note: 'Resmî e-Plan plan ve askı ilanları sayfası; her parsel için kayıt bulunması garanti değildir.',
+    machineReadableCandidate: false,
+    automatedQueryAllowed: false
+  });
+  return actions;
+}`
+  ],
+  [
+    `function matchingConnectors(raw, location) {
+  const parsed = parseJson(raw, []);
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.connectors) ? parsed.connectors : [];
+  return list.filter((item) => item?.url && matchesLocation(item, location)).slice(0, 20).map((item, index) => ({
+    ...item,
+    id: clean(item.id, 120) || \`municipality-\${index + 1}\`
+  }));
+}`,
+    `function matchingConnectors(raw, location) {
+  const parsed = parseJson(raw, []);
+  const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.connectors) ? parsed.connectors : [];
+  return list.filter((item) => {
+    const url = safeHttpsUrl(item?.publicUrl || item?.sourceUrl || item?.url);
+    return Boolean(url && matchesLocation(item, location));
+  }).slice(0, 20).map((item, index) => ({
+    ...item,
+    id: clean(item.id, 120) || \`municipality-\${index + 1}\`
+  }));
+}`
+  ],
+  [
+    `  const neighbourhood = clean(p.neighbourhood || query?.neighbourhood, 160);
+  return {
+    province,
+    district,
+    neighbourhood,
+    provinceKey: normalize(province),
+    districtKey: normalize(district),
+    neighbourhoodKey: normalize(neighbourhood)
+  };`,
+    `  const neighbourhood = clean(p.neighbourhood || query?.neighbourhood, 160);
+  const block = clean(p.block || query?.block || query?.ada, 80);
+  const parcelNumber = clean(p.parcel || query?.parcel || query?.parsel, 80);
+  return {
+    province,
+    district,
+    neighbourhood,
+    block,
+    parcel: parcelNumber,
+    provinceKey: normalize(province),
+    districtKey: normalize(district),
+    neighbourhoodKey: normalize(neighbourhood)
+  };`
+  ],
+  [
+    `function servicePriority(service) {
+  let score = 0;
+  if (service.status === 'manual-only' || service.accessMode === 'manual-only') score += 110;
+  if (service.kind === 'configured-adapter') score += 200;
+  if (service.kind === 'municipality-geodata') score += 120;
+  if (service.kind === 'municipality-portal') score += 80;
+  if (service.accessMode === 'public-portal') score += 50;
+  if (service.machineReadableCandidate) score += 70;
+  if (service.accessMode === 'official-login-service') score += 10;
+  if (/imar durum/i.test(service.title || '')) score += 12;
+  return score;
+}
+
+function sortActions(actions) {
+  return [...actions].sort((a, b) => servicePriority(b) - servicePriority(a) || String(a.title || '').localeCompare(String(b.title || ''), 'tr'));
+}
+
+function dedupeServices(services) {
+  const seen = new Set();
+  return services.filter((item) => {
+    const key = item?.url || item?.id || \`\${item?.provider}:\${item?.title}\`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => servicePriority(b) - servicePriority(a));
+}
+
+function dedupeActions(actions) {
+  const seen = new Set();
+  return actions.filter((item) => {
+    const key = item?.kind === 'configured-adapter'
+      ? \`configured:\${item?.id || item?.url || item?.title}\`
+      : item?.url || item?.id || item?.title;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function safeHttpsUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch { return null; }
+}`,
+    `function servicePriority(service = {}) {
+  let score = 0;
+  if (service.kind === 'configured-adapter') score += 600;
+  if (service.accessMode === 'automatic-adapter') score += 550;
+  if (service.kind === 'municipality-geodata') score += 500;
+  if (service.accessMode === 'public-portal') score += 400;
+  if (service.kind === 'municipality-portal') score += 250;
+  if (service.status === 'official-service-found' || service.accessMode === 'official-service') score += 220;
+  if (service.status === 'manual-only' || service.accessMode === 'manual-only') score += 400;
+  if (service.accessMode === 'official-login-service') score += 120;
+  if (service.accessMode === 'official-search') score += 300;
+  if (service.kind === 'national-portal' || service.kind === 'national-geodata' || service.kind === 'national-directory' || service.kind === 'national-plan-directory') score += 40;
+  if (service.kind === 'discovery-search' || service.accessMode === 'discovery-only') score -= 50;
+  if (service.machineReadableCandidate) score += 70;
+  if (/imar durum/i.test(service.title || '')) score += 12;
+  return score;
+}
+
+function sortActions(actions) {
+  return [...actions].sort((a, b) => servicePriority(b) - servicePriority(a) || itemRichness(b) - itemRichness(a) || String(a.title || '').localeCompare(String(b.title || ''), 'tr'));
+}
+
+function itemRichness(item = {}) {
+  return ['provider', 'note', 'authentication', 'verifiedAt', 'termsUrl', 'catalogRecordId'].reduce((score, key) => score + (item[key] ? 1 : 0), 0);
+}
+
+function canonicalUrlKey(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== 'https:') return null;
+    url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(?:utm_.+|gclid|fbclid|mc_[ce]id)$/i.test(key)) url.searchParams.delete(key);
+    }
+    const sorted = [...url.searchParams.entries()].sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv));
+    url.search = '';
+    for (const [key, entryValue] of sorted) url.searchParams.append(key, entryValue);
+    const pathname = url.pathname.replace(/\\/+$/, '') || '/';
+    return \`\${url.origin.toLowerCase()}\${pathname}\${url.search}\`;
+  } catch { return null; }
+}
+
+function serviceKey(item = {}) {
+  const urlKey = canonicalUrlKey(item.url);
+  if (urlKey) return \`url:\${urlKey}\`;
+  return \`id:\${item.id || item.title || item.provider || 'unknown'}\`;
+}
+
+function dedupeServices(services) {
+  const seen = new Set();
+  const sorted = sortActions(services);
+  return sorted.filter((item) => {
+    const key = serviceKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeActions(actions) {
+  const seen = new Set();
+  return sortActions(actions).filter((item) => {
+    const key = serviceKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function blockedHostname(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\\[|\\]$/g, '').replace(/\\.$/, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host === '::' || host === '::1' || host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab]/.test(host)) return true;
+  if (host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.') || host.startsWith('::ffff:192.168.')) return true;
+  const parts = host.split('.');
+  if (parts.length === 4 && parts.every((part) => /^\\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
+    const [a, b] = parts.map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && [18, 19].includes(b));
+  }
+  return false;
+}
+
+function safeHttpsUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== 'https:' || url.username || url.password || blockedHostname(url.hostname)) return null;
+    return url.toString();
+  } catch { return null; }
+}`
+  ]
+]);
+
 const css = await readFile('dist/styles.css', 'utf8');
 await writeFile('dist/styles.css', `${css}\n
-/* v3.2.9 truthful results, compact sources and mobile Plan AI */
+/* v3.3.0 nationwide official routing, truthful results and mobile Plan AI */
 .context-safe-note{display:grid;gap:8px;text-align:left}
 .context-safe-note strong{color:var(--text)}
 .context-safe-note span{color:var(--muted);line-height:1.6}
@@ -430,27 +838,32 @@ for (const file of [
 ]) {
   let text = await readFile(file, 'utf8');
   text = text
-    .replaceAll('https://e-plan.gov.tr/e-plan/html/imarDurumu.html', 'https://eplan.csb.gov.tr/')
+    .replaceAll('https://e-plan.gov.tr/e-plan/html/imarDurumu.html', routingPortals.eplanImar)
     .replaceAll('https://e-plan.gov.tr/', 'https://eplan.csb.gov.tr/')
-    .replaceAll('v3\\.2\\.7', 'v3\\.2\\.9')
-    .replaceAll('v3\\.2\\.8', 'v3\\.2\\.9')
-    .replaceAll('3.2.7', '3.2.9')
-    .replaceAll('3.2.8', '3.2.9');
+    .replaceAll('v3\\.2\\.7', 'v3\\.3\\.0')
+    .replaceAll('v3\\.2\\.8', 'v3\\.3\\.0')
+    .replaceAll('v3\\.2\\.9', 'v3\\.3\\.0')
+    .replaceAll('3.2.7', '3.3.0')
+    .replaceAll('3.2.8', '3.3.0')
+    .replaceAll('3.2.9', '3.3.0');
   await writeFile(file, text);
 }
 
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-packageJson.version = '3.2.9';
+packageJson.version = '3.3.0';
+packageJson.scripts.check = String(packageJson.scripts.check || '')
+  .replace(/node --check postbuild-tests\/v\d+-postbuild\.test\.mjs(?: && node --check postbuild-tests\/v330-provider-routing\.test\.mjs)?/, 'node --check postbuild-tests/v330-postbuild.test.mjs && node --check postbuild-tests/v330-provider-routing.test.mjs');
 await writeFile('package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
 
 await mkdir('postbuild-tests', { recursive: true });
 await rm('postbuild-tests/v328-postbuild.test.mjs', { force: true });
-await writeFile('postbuild-tests/v329-postbuild.test.mjs', `
+await rm('postbuild-tests/v329-postbuild.test.mjs', { force: true });
+await writeFile('postbuild-tests/v330-postbuild.test.mjs', `
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('v3.2.9 mobil harita ve istemci süreleri korundu', async () => {
+test('v3.3.0 mobil harita ve istemci süreleri korundu', async () => {
   const app = await readFile('dist/app.js', 'utf8');
   assert.ok(app.includes('osm.addTo(map)'));
   assert.match(app, /refreshParcelMap/);
@@ -458,14 +871,14 @@ test('v3.2.9 mobil harita ve istemci süreleri korundu', async () => {
   assert.match(app, /timeoutMs: 35_000/);
 });
 
-test('v3.2.9 canlı servis bütçeleri ve Plan AI alt paneli uygulandı', async () => {
+test('v3.3.0 canlı servis bütçeleri ve Plan AI alt paneli uygulandı', async () => {
   const analyze = await readFile('netlify/functions/analyze.mjs', 'utf8');
   const css = await readFile('dist/styles.css', 'utf8');
   const app = await readFile('dist/app.js', 'utf8');
   assert.match(analyze, /OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 16000/);
   assert.match(analyze, /PLAN_AI_TIMEOUT_MS: 24000/);
   assert.match(analyze, /60_000/);
-  assert.match(css, /v3\.2\.9 truthful results/);
+  assert.match(css, /v3\.3\.0 nationwide official routing/);
   assert.match(css, /max-width:1100px/);
   assert.match(css, /\.side-drawer\.is-plan-ai/);
   assert.match(css, /max-height:90dvh/);
@@ -473,7 +886,7 @@ test('v3.2.9 canlı servis bütçeleri ve Plan AI alt paneli uygulandı', async 
   assert.match(app, /classList\.remove\\('is-plan-ai'/);
 });
 
-test('v3.2.9 doğrulanmayan imar için yanıltıcı kullanım ve ruhsat kartı üretmez', async () => {
+test('v3.3.0 doğrulanmayan imar için yanıltıcı kullanım ve ruhsat kartı üretmez', async () => {
   const html = await readFile('dist/index.html', 'utf8');
   const app = await readFile('dist/app.js', 'utf8');
   assert.doesNotMatch(html, /Bu arsada neler yapabilirsiniz/);
@@ -481,23 +894,50 @@ test('v3.2.9 doğrulanmayan imar için yanıltıcı kullanım ve ruhsat kartı �
   assert.match(html, /id="possibilityTitle"/);
   assert.match(html, /id="roadmapTitle"/);
   assert.match(app, /function hasVerifiedZoning/);
-  assert.match(app, /Yapılaşma izni bulunmuş değildir/);
+  assert.match(app, /Yapılaşma izni doğrulanamadı/);
+  assert.match(app, /Bu, yapı yapılamayacağı anlamına gelmez/);
+  assert.doesNotMatch(app, /Yapılaşma izni bulunmuş değildir/);
   assert.match(app, /Bu parselde yapı yapılabileceği henüz doğrulanmadı/);
   assert.match(app, /mezarlık/i);
 });
 
-test('v3.2.9 kaynakları tekilleştirir ve ayrıntıları kapalı tutar', async () => {
+test('v3.3.0 kaynakları anlamlı sorguyu koruyarak tekilleştirir', async () => {
   const html = await readFile('dist/index.html', 'utf8');
   const app = await readFile('dist/app.js', 'utf8');
   assert.match(app, /function normalizedDisplayKey/);
   assert.match(app, /function dedupeDisplayItems/);
+  assert.match(app, /utm_/);
+  assert.match(app, /searchParams\.entries/);
   assert.match(app, /const actions = dedupeDisplayItems/);
   assert.match(app, /const uniqueSources = dedupeDisplayItems/);
   assert.match(html, /<details class="card official-services-card compact-details"/);
   assert.match(html, /<details class="card source-card compact-details"/);
 });
 
-test('v3.2.9 Cloudflare hesap durumunu doğru algılar ve yerel kayıt uyarısı gösterir', async () => {
+test('v3.3.0 81 il resmî yönlendirme ve güvenli URL motoru üretildi', async () => {
+  const provider = await readFile('netlify/functions/lib/municipality-provider.mjs', 'utf8');
+  const routing = JSON.parse(await readFile('dist/data/official-source-routing.json', 'utf8'));
+  const catalog = JSON.parse(await readFile('dist/data/municipality-official-services.json', 'utf8'));
+  assert.equal(routing.coverage.provinceCount, 81);
+  assert.equal(routing.coverage.automaticDataClaim, false);
+  assert.equal(catalog.stats.routingProvinceCount, 81);
+  assert.equal(catalog.stats.nationwideRouting, true);
+  assert.match(provider, /buildGoogleOfficialSearchUrl/);
+  assert.match(provider, /site:bel\.tr OR site:gov\.tr/);
+  assert.match(provider, /canonicalUrlKey/);
+  assert.match(provider, /blockedHostname/);
+  assert.match(provider, /automaticDataClaim: false/);
+});
+
+test('v3.3.0 ticari veri yetkisini doğru açıklar ve resmî doğrudan linkleri kullanır', async () => {
+  const html = await readFile('dist/index.html', 'utf8');
+  const app = await readFile('dist/app.js', 'utf8');
+  assert.match(html, /yalnız açık veya izinli kaynakları otomatik okur/);
+  assert.match(app, /TAKPAS ve ilgili kurum yetkileri gerekir/);
+  assert.match(html, /eplan\.csb\.gov\.tr\\/e-plan\\/html\\/imarDurumu\.html/);
+});
+
+test('v3.3.0 Cloudflare hesap durumunu doğru algılar ve yerel kayıt uyarısı gösterir', async () => {
   const app = await readFile('dist/app.js', 'utf8');
   const worker = await readFile('src/worker.js', 'utf8');
   assert.match(app, /ACCOUNT_SYNC_DISABLED/);
@@ -507,15 +947,15 @@ test('v3.2.9 Cloudflare hesap durumunu doğru algılar ve yerel kayıt uyarısı
   assert.match(worker, /ACCOUNT_SYNC_DISABLED/);
 });
 
-test('v3.2.9 sürümü ve önbellek anahtarları tek sürümdür', async () => {
+test('v3.3.0 sürümü ve önbellek anahtarları tek sürümdür', async () => {
   const html = await readFile('dist/index.html', 'utf8');
   const pkg = JSON.parse(await readFile('package.json', 'utf8'));
-  assert.equal(pkg.version, '3.2.9');
-  assert.match(html, /styles\.css\\?v=3\.2\.9/);
-  assert.match(html, /app\.js\\?v=3\.2\.9/);
-  assert.match(html, /PLANLAMASYON · v3\.2\.9/);
-  assert.doesNotMatch(html, /3\.2\.8/);
+  assert.equal(pkg.version, '3.3.0');
+  assert.match(html, /styles\.css\\?v=3\.3\.0/);
+  assert.match(html, /app\.js\\?v=3\.3\.0/);
+  assert.match(html, /PLANLAMASYON · v3\.3\.0/);
+  assert.doesNotMatch(html, /3\.2\.[789]/);
 });
 `);
 
-console.log('Planlamasyon v3.2.9 post-build düzeltmeleri uygulandı.');
+console.log('Planlamasyon v3.3.0 ulusal resmî kaynak yönlendirmesi uygulandı.');

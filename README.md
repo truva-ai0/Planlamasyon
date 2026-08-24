@@ -1,4 +1,21 @@
-# Planlamasyon v3.2.9 — Doğru Bağlam ve Mobil Sonuç Deneyimi
+# Planlamasyon v3.3.0 — Türkiye Geneli Resmî Kaynak Yönlendirmesi
+
+## v3.3.0 yenilikleri
+
+- Her il ve ilçe için e-Devlet belediye imar araması, e-Plan imar durumu, e-Plan plan/askı kayıtları, TUCBS ve TKGM resmî yolları dinamik olarak sunulur.
+- Gömülü 117 doğrulanmış bağlantı doğrudan eşleşme için korunur; katalogda kayıt olmayan yerlerde Türkiye'nin 81 ili için güvenli ulusal yönlendirme devreye girer.
+- Google üzerinden yalnız `bel.tr` ve `gov.tr` alan adlarında imar kaynağı keşif bağlantısı oluşturulur. Arama sonucu doğrulanmadan resmî veri veya otomatik sorgu kaynağı sayılmaz.
+- Aynı kaynağın büyük/küçük alan adı, son `/`, takip parametresi ve sorgu-parametresi sırası farklılıkları kanonikleştirilerek tekilleştirilir; anlamlı sorgu parametreleri korunur.
+- Açık resmî portal manuel bağlantıdan önce seçilir; URL değişikliği sağlayıcı önbelleğini yeniler.
+- Localhost, özel IP, kullanıcı adı/şifre içeren ve HTTPS olmayan yönlendirme adresleri reddedilir.
+- “Yapılaşma izni bulunmuş değildir” ifadesi kaldırıldı. Yerine “Yapılaşma izni doğrulanamadı; bu, yapı yapılamayacağı anlamına gelmez” açıklaması kullanılır.
+- Bağlantı bulunması TAKS, emsal, kat veya yapı izni doğrulandığı anlamına gelmez. Yalnız açık lisanslı ya da açıkça yetkilendirilmiş veri adaptörleri otomatik hesap kaynağı olabilir.
+
+## Ticari kullanım sınırı
+
+Google'da veya halka açık bir portalda bulunmak, verinin ticari olarak çekilip yeniden yayımlanabileceği anlamına gelmez. Ticari kadastro otomasyonu için TAKPAS sözleşmesi; kısıtlı coğrafi servisler için ilgili TUCBS/veri sahibi kurum izinleri gerekir. e-Devlet ve e-Plan hizmetleri bu sürümde güvenli bağlantı yönlendirmesi olarak kullanılır; kullanıcı oturumu veya resmî form işlemi otomatikleştirilmez.
+
+# Önceki sürüm: Planlamasyon v3.2.9 — Doğru Bağlam ve Mobil Sonuç Deneyimi
 
 ## v3.2.9 düzeltmeleri
 

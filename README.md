@@ -1,4 +1,20 @@
-# Planlamasyon v3.3.0 — Türkiye Geneli Resmî Kaynak Yönlendirmesi
+# Planlamasyon v3.4.0 — Hızlı ve İzinli Parsel Karar Akışı
+
+## v3.4.0 yenilikleri
+
+- TKGM taşınmaz niteliği ile imar planı/yeni yapı hakkı ekranda iki ayrı kayıt olarak gösterilir. Kadastro kartında sürekli görünen “İmar hakkı değildir” uyarısı bulunur.
+- Mobil sonuç ekranına parsel, tapu/kadastro kaydı ve imar doğrulama durumunu tek bakışta veren hızlı karar özeti eklendi. Doğrulanmış hesap yoksa dört boş “Doğrulanamadı” kartı gizlenir.
+- Parsel ve kadastro geometrisi, uzun imar analizi beklenmeden gösterilir. Otomatik Plan AI ilk fazdan çıkarıldı; açık resmî kaynak taraması 15 saniyelik üst sınır içinde tamamlanır. Plan AI kullanıcı isteğiyle ayrıca çalışır.
+- OpenStreetMap karoları yüklenmezse harita bir kez uydu tabanına geçer. İki taban da başarısız olduğunda parsel geometrisi korunur ve “Yeniden dene” kontrolü gösterilir.
+- Beşiktaş Belediyesi için resmî hizmet yolu `manual-only` olarak kayıtlıdır. Yayımlanan kullanım koşulları nedeniyle portal otomatik taranmaz veya form gönderilmez.
+- Beşiktaş KEOS/Netcad sonucu yalnız kullanıcının resmî portaldan aldığı HTML dosyasını yüklemesi/yapıştırması ve açık onay vermesiyle çevrimdışı ayrıştırılır. Ada/parsel birebir eşleşmezse hiçbir değer uygulanmaz; boş TAKS, emsal, kat veya bahçe alanı tahmin edilmez.
+- 816/35 fikstürü; plan adı, Konut Alanı, 1/1000 ölçek, 09.08.2007 plan tasdik tarihi ve 12,50 m bina yüksekliği alanlarını okuma motoruna karşı test eder. Bunlar canlı portalın otomatik çekildiği anlamına gelmez.
+
+## İzin ve ticari kullanım sınırı
+
+Halka açık bir sonuç sayfası teknik olarak açılabiliyor olsa bile bu, üçüncü taraf otomatik işleme veya ticari yeniden yayımlama izni anlamına gelmez. Beşiktaş Belediyesi’nin yayımladığı koşullar üçüncü taraf otomasyonunu yasakladığı için bu bağlantı yalnız kullanıcı tarafından açılır. Otomatik entegrasyon ancak belediye ve gerekiyorsa yazılım/veri sahibinden yazılı izin veya lisanslı API alındığında etkinleştirilmelidir.
+
+# Önceki sürüm: Planlamasyon v3.3.0 — Türkiye Geneli Resmî Kaynak Yönlendirmesi
 
 ## v3.3.0 yenilikleri
 

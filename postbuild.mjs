@@ -65,6 +65,231 @@ await replaceRequired('dist/app.js', [
   ['Örn. Bu arsaya kaç kat yapılabilir?', 'Örn. Bu parselde kaç kat yapılabilir?']
 ]);
 
+const v340Css = await readFile('dist/styles.css', 'utf8');
+await writeFile('dist/styles.css', `${v340Css}
+
+/* v3.4.0 kadastro/imar ayrımı, mobil karar özeti ve harita yedeği */
+.record-badge-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.rights-warning-badge{padding:7px 10px;border-radius:999px;border:1px solid rgba(239,182,93,.35);background:rgba(239,182,93,.08);color:var(--amber);font-size:11px;font-weight:800}
+.mobile-result-summary{display:none;margin-bottom:14px;padding:18px}
+.mobile-result-summary>strong{display:block;font-size:15px;margin-bottom:11px}
+.mobile-result-summary dl{display:grid;gap:8px;margin:0}
+.mobile-result-summary dl>div{display:grid;grid-template-columns:minmax(105px,.8fr) minmax(0,1.2fr);gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:13px;background:var(--surface-soft)}
+.mobile-result-summary dt{color:var(--muted);font-size:11px}.mobile-result-summary dd{margin:0;font-size:12px;font-weight:750;line-height:1.4}
+.map-base-status{position:absolute;left:12px;right:12px;bottom:12px;z-index:650;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(239,182,93,.45);border-radius:13px;background:rgba(7,19,34,.94);color:#eef5ff;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.28)}
+.map-base-status[hidden]{display:none}.map-base-status button{border:0;border-radius:9px;padding:7px 10px;background:var(--blue);color:#fff;font-weight:800;white-space:nowrap;cursor:pointer}
+.document-source-confirm{border-color:rgba(77,145,255,.28)!important;background:rgba(77,145,255,.06)!important}
+@media(max-width:640px){
+  .mobile-result-summary{display:block}
+  .result-grid{gap:12px}
+  .record-badge-row{align-items:flex-start}
+  .cadastral-strip>div span{line-height:1.35}
+}
+`);
+
+await replaceRequired('dist/app.js', [
+  [
+    `function renderCadastralBase(feature) {
+  const p = feature?.properties || {};
+  const location = [p.province, p.district, p.neighbourhood].filter(Boolean).join(' / ') || 'Konum bilgisi yok';
+  const areaText = formatArea(p.area, p.areaText);
+  elements.parcelAddress.textContent = \`\${location} · \${p.block || '—'} ada \${p.parcel || '—'} parsel\`;
+  elements.plainExplanation.textContent = 'Parsel bulundu. Plan, plan notu, yapılaşma koşulları ve yakın çevre kaynakları inceleniyor.';
+  elements.metricArea.textContent = areaText;
+  elements.metricQuality.textContent = p.quality || 'Belirtilmemiş';
+  elements.metricMapSheet.textContent = p.mapSheet || 'Belirtilmemiş';
+  elements.metricBlockParcel.textContent = \`\${p.block || '—'} / \${p.parcel || '—'}\`;
+  elements.zoningOverviewTitle.textContent = 'Plan verisi kontrol ediliyor';
+  elements.zoningOverviewText.textContent = 'Doğrulanmış yapılaşma koşulları aranıyor.';
+  elements.zoningMiniList.innerHTML = '<div><dt>Resmî kaynaklar</dt><dd>Kontrol ediliyor…</dd></div>';
+}`,
+    `function renderCadastralBase(feature) {
+  const p = feature?.properties || {};
+  const location = [p.province, p.district, p.neighbourhood].filter(Boolean).join(' / ') || 'Konum bilgisi yok';
+  const areaText = formatArea(p.area, p.areaText);
+  elements.parcelAddress.textContent = \`\${location} · \${p.block || '—'} ada \${p.parcel || '—'} parsel\`;
+  elements.plainExplanation.textContent = \`TKGM açık CBS kaydında bu parsel \${areaText} olarak görünüyor. Taşınmaz niteliği imar planı fonksiyonu veya yeni yapı hakkı değildir.\`;
+  elements.metricArea.textContent = areaText;
+  elements.metricQuality.textContent = p.quality || 'Belirtilmemiş';
+  elements.metricMapSheet.textContent = p.mapSheet || 'Belirtilmemiş';
+  elements.metricBlockParcel.textContent = \`\${p.block || '—'} / \${p.parcel || '—'}\`;
+  elements.zoningOverviewTitle.textContent = 'İmar ve yeni yapı hakkı kontrol ediliyor';
+  elements.zoningOverviewText.textContent = 'Kadastro kaydından ayrı olarak güncel resmî plan ve yapılaşma koşulları aranıyor.';
+  elements.zoningMiniList.innerHTML = '<div><dt>Resmî imar kaynakları</dt><dd>Kontrol ediliyor…</dd></div>';
+  renderDecisionSummary(null);
+}`
+  ],
+  [
+    `function renderAnalysis(analysis) {
+  elements.plainExplanation.textContent = analysis.explanation || 'Analiz sonucu hazırlanamadı.';
+  renderAnalysisStatus(analysis);`,
+    `function renderAnalysis(analysis) {
+  renderDecisionSummary(analysis);
+  renderAnalysisStatus(analysis);`
+  ],
+  [
+    `  elements.plainExplanation.textContent = \`\${buildCadastralExplanation(state.parcelFeature)} İmar ve yakın çevre analizi geçici bir hata nedeniyle tamamlanamadı.\`;`,
+    `  elements.plainExplanation.textContent = buildCadastralExplanation(state.parcelFeature);
+  renderDecisionSummary({ status: 'cadastral-only', zoningStatus: 'unavailable', zoning: { fields: {} } });`
+  ],
+  [
+    `function renderSummary(metrics) {
+  elements.summaryFloors.textContent = metrics.floors?.display || 'Doğrulanamadı';
+  elements.summaryFootprint.textContent = metrics.footprint?.display || 'Doğrulanamadı';
+  elements.summaryConstruction.textContent = metrics.construction?.display || 'Doğrulanamadı';
+  elements.summaryOutside.textContent = metrics.outside?.display || 'Doğrulanamadı';
+}
+
+function renderPossibilities(items) {`,
+    `function renderSummary(metrics) {
+  const values = [metrics.floors, metrics.footprint, metrics.construction, metrics.outside];
+  const hasAnyMetric = values.some((item) => item && item.value != null && item.display && item.display !== 'Doğrulanamadı');
+  if (elements.summaryGrid) elements.summaryGrid.hidden = !hasAnyMetric;
+  elements.summaryFloors.textContent = metrics.floors?.display || 'Doğrulanamadı';
+  elements.summaryFootprint.textContent = metrics.footprint?.display || 'Doğrulanamadı';
+  elements.summaryConstruction.textContent = metrics.construction?.display || 'Doğrulanamadı';
+  elements.summaryOutside.textContent = metrics.outside?.display || 'Doğrulanamadı';
+}
+
+function renderDecisionSummary(analysis) {
+  const p = state.parcelFeature?.properties || {};
+  if (elements.mobileSummaryParcel) elements.mobileSummaryParcel.textContent = p.block && p.parcel ? \`Bulundu · \${p.block}/\${p.parcel}\` : 'Parsel bekleniyor';
+  if (elements.mobileSummaryCadastre) elements.mobileSummaryCadastre.textContent = p.quality ? \`\${p.quality} · imar hakkı değildir\` : 'Nitelik belirtilmemiş · imar hakkı değildir';
+  if (!elements.mobileSummaryZoning) return;
+  if (!analysis) {
+    elements.mobileSummaryZoning.textContent = 'Güncel resmî kaynaklar kontrol ediliyor';
+    return;
+  }
+  const fields = analysis.zoning?.fields || {};
+  const manualOnly = Boolean(analysis.manualOnly || analysis.zoningStatus === 'manual-only' || analysis.zoning?.manualOnly);
+  if (hasVerifiedZoning(analysis)) {
+    const parts = [fields.landUse, fields.planScale, fields.hmax != null ? \`Yençok \${formatNumber(fields.hmax)} m\` : null].filter(Boolean);
+    elements.mobileSummaryZoning.textContent = parts.length ? \`Doğrulanan: \${parts.join(' · ')}\` : 'Kısmi resmî imar değeri doğrulandı';
+  } else if (manualOnly) {
+    elements.mobileSummaryZoning.textContent = 'Manuel resmî sorgu veya güncel belge gerekli';
+  } else {
+    elements.mobileSummaryZoning.textContent = 'Doğrulanmadı · yapı hakkı hesabı üretilmedi';
+  }
+}
+
+function renderPossibilities(items) {`
+  ]
+]);
+
+await replaceRequired('dist/app.js', [
+  [
+    `function setupMap() {
+  if (!globalThis.L) {
+    elements.mapUnavailable.hidden = false;
+    return;
+  }
+  const map = L.map('parcelMap', { zoomControl: true, attributionControl: true, preferCanvas: true }).setView([39.05, 35.2], 6);
+  const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20,
+    attribution: 'Tiles © Esri, Maxar, Earthstar Geographics'
+  });
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '© OpenStreetMap katkıda bulunanlar'
+  });
+  osm.addTo(map);
+  L.control.layers({ Uydu: imagery, Harita: osm }, {}, { position: 'bottomright', collapsed: true }).addTo(map);
+  state.map = map;
+  map.on('click', onMapClick);
+  const refreshMapSize = () => {
+    if (!state.map) return;
+    state.map.invalidateSize({ pan: false, animate: false });
+  };
+  [100, 350, 900].forEach((delay) => setTimeout(refreshMapSize, delay));
+  window.addEventListener('resize', () => setTimeout(refreshMapSize, 120), { passive: true });
+  window.addEventListener('orientationchange', () => setTimeout(refreshMapSize, 240), { passive: true });
+}`,
+    `function setupMap() {
+  if (!globalThis.L) {
+    elements.mapUnavailable.hidden = false;
+    return;
+  }
+  const map = L.map('parcelMap', { zoomControl: true, attributionControl: true, preferCanvas: true }).setView([39.05, 35.2], 6);
+  const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20,
+    attribution: 'Tiles © Esri, Maxar, Earthstar Geographics'
+  });
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '© OpenStreetMap katkıda bulunanlar'
+  });
+  let osmErrors = 0;
+  let imageryErrors = 0;
+  let automaticSwitch = false;
+  let fallbackTimer = null;
+  const hideMapBaseStatus = () => { if (elements.mapBaseStatus) elements.mapBaseStatus.hidden = true; };
+  const showMapBaseStatus = () => { if (elements.mapBaseStatus) elements.mapBaseStatus.hidden = false; };
+  const markBaseLoaded = (layer) => {
+    if (state.mapBaseLayer !== layer) return;
+    state.mapBaseLoaded = true;
+    clearTimeout(fallbackTimer);
+    hideMapBaseStatus();
+  };
+  const switchToImageryFallback = () => {
+    if (state.mapBaseFallbackActivated || state.mapBaseUserSelected || state.mapBaseLoaded) return;
+    state.mapBaseFallbackActivated = true;
+    automaticSwitch = true;
+    if (map.hasLayer(osm)) map.removeLayer(osm);
+    imagery.addTo(map);
+    state.mapBaseLayer = imagery;
+    state.mapBaseLoaded = false;
+    setTimeout(() => { automaticSwitch = false; }, 0);
+  };
+  osm.on('load', () => markBaseLoaded(osm));
+  osm.on('tileerror', () => {
+    osmErrors += 1;
+    if (osmErrors >= 4) switchToImageryFallback();
+  });
+  imagery.on('load', () => markBaseLoaded(imagery));
+  imagery.on('tileerror', () => {
+    imageryErrors += 1;
+    if (imageryErrors >= 4 && state.mapBaseLayer === imagery) showMapBaseStatus();
+  });
+  osm.addTo(map);
+  state.mapBaseLayer = osm;
+  L.control.layers({ Uydu: imagery, Harita: osm }, {}, { position: 'bottomright', collapsed: true }).addTo(map);
+  map.on('baselayerchange', (event) => {
+    state.mapBaseLayer = event.layer;
+    state.mapBaseLoaded = false;
+    if (!automaticSwitch) state.mapBaseUserSelected = true;
+    hideMapBaseStatus();
+  });
+  fallbackTimer = setTimeout(switchToImageryFallback, 4000);
+  elements.mapBaseRetryButton?.addEventListener('click', () => {
+    osmErrors = 0;
+    imageryErrors = 0;
+    state.mapBaseLoaded = false;
+    hideMapBaseStatus();
+    state.mapBaseLayer?.redraw?.();
+  });
+  state.map = map;
+  map.on('click', onMapClick);
+  const refreshMapSize = () => {
+    if (!state.map) return;
+    state.map.invalidateSize({ pan: false, animate: false });
+  };
+  [100, 350, 900].forEach((delay) => setTimeout(refreshMapSize, delay));
+  window.addEventListener('resize', () => setTimeout(refreshMapSize, 120), { passive: true });
+  window.addEventListener('orientationchange', () => setTimeout(refreshMapSize, 240), { passive: true });
+}`
+  ],
+  [
+    `  await analyzeCurrentParcel();
+}`,
+    `  void analyzeCurrentParcel();
+}`
+  ],
+  [
+    `    }, { signal: controller.signal, timeoutMs: 65_000 });`,
+    `    }, { signal: controller.signal, timeoutMs: 18_000 });`
+  ]
+]);
+
 await replaceRequired('dist/app.js', [
   [
     `function openDrawer(title, html) {
@@ -794,6 +1019,185 @@ function safeHttpsUrl(value) {
   ]
 ]);
 
+await replaceRequired('netlify/functions/parse-zoning-document.mjs', [
+  [
+    `import { parseZoningDocumentText, ZONING_DOCUMENT_PARSER_VERSION } from './lib/zoning-document-parser.mjs';`,
+    `import { parseZoningDocumentText, ZONING_DOCUMENT_PARSER_VERSION } from './lib/zoning-document-parser.mjs';
+import { parseBesiktasKeosImarHtml, BESIKTAS_KEOS_IMAR_PARSER_VERSION } from './lib/besiktas-keos-imar-parser.mjs';`
+  ],
+  [
+    `    const parsed = parseZoningDocumentText({ text, query, parcel, metadata });`,
+    `    const parsed = looksLikeBesiktasKeosHtml(text)
+      ? parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mode })
+      : parseZoningDocumentText({ text, query, parcel, metadata });`
+  ],
+  [
+    `async function fetchOfficialDocument(inputUrl) {`,
+    `function looksLikeBesiktasKeosHtml(text) {
+  return /Beşiktaş Belediyesi[^<]{0,120}İmar Durumu|T\.C\.\s*Beşiktaş Belediyesi/iu.test(String(text || ''))
+    && /divTableRow|htmlOutput/iu.test(String(text || ''));
+}
+
+function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mode }) {
+  if (mode !== 'text') throw httpError('Beşiktaş Belediyesi portalı otomatik URL okumasına kapalıdır. Güncel resmî sonucu indirip Dosya sekmesinden yükleyin.', 403, 'BESIKTAS_AUTOMATIC_READ_FORBIDDEN');
+  const parsed = parseBesiktasKeosImarHtml({
+    html: text,
+    query,
+    parcel,
+    sourceUrl: metadata.sourceUrl,
+    evidence: {
+      origin: body.evidenceOrigin,
+      userConfirmedOfficialSource: body.userConfirmedOfficialSource === true
+    }
+  });
+  if (parsed.status === 'permission-required') {
+    throw httpError('Bu belediye sonucu yalnız kullanıcı tarafından sağlanan resmî belge ve açık kullanıcı onayıyla okunabilir.', 403, 'DOCUMENT_USER_CONFIRMATION_REQUIRED');
+  }
+  const expected = parsed.expectedParcel || {};
+  if (!parsed.canApply || !parsed.record) {
+    return {
+      version: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
+      status: 'review-required',
+      canApply: false,
+      documentType: 'zoning-status-document',
+      documentTypeLabel: 'Beşiktaş Belediyesi imar durumu sonucu',
+      documentHash: null,
+      parcelMatch: parsed.parcelMatch,
+      detectedParcels: parsed.detectedParcel ? [parsed.detectedParcel] : [],
+      expectedParcel: expected,
+      fields: {},
+      fieldEvidence: {},
+      evidence: {
+        confirmed: false,
+        parcelConfirmed: false,
+        sourceTitle: 'Beşiktaş Belediyesi İmar Durumu',
+        authority: 'Beşiktaş Belediyesi',
+        sourceUrl: null,
+        parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
+        documentType: 'zoning-status-document',
+        parcelMatchStatus: parsed.parcelMatch?.status || 'unverified',
+        fieldEvidence: {},
+        allowances: {}
+      },
+      completeness: { populatedCore: 0, requiredTotal: 7, requiredFound: 0, missing: parsed.missingFields || [], percentage: 0 },
+      confidence: 'low',
+      warnings: parsed.warnings || [parsed.message],
+      preview: ''
+    };
+  }
+  const generic = parseZoningDocumentText({ text: htmlToText(text), query, parcel, metadata });
+  const fields = parsed.fields || {};
+  const fieldEvidence = Object.fromEntries(Object.entries(parsed.fieldEvidence || {}).map(([key, item]) => [key, {
+    label: item.label || key,
+    confidence: item.confidence || 'high',
+    excerpt: \`\${item.label || key}: \${item.rawValue ?? item.value ?? ''}\`,
+    method: item.method || 'besiktas-keos-result-row'
+  }]));
+  const core = ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
+  const populated = core.filter((key) => fields[key] != null);
+  const required = ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'];
+  const missing = required.filter((key) => fields[key] == null);
+  return {
+    ...generic,
+    version: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
+    status: missing.length ? 'partial' : 'ready',
+    canApply: true,
+    documentType: 'zoning-status-document',
+    documentTypeLabel: 'Beşiktaş Belediyesi imar durumu sonucu',
+    parcelMatch: parsed.parcelMatch,
+    detectedParcels: [parsed.detectedParcel],
+    expectedParcel: expected,
+    fields,
+    fieldEvidence,
+    evidence: {
+      ...generic.evidence,
+      confirmed: false,
+      parcelConfirmed: true,
+      sourceTitle: parsed.source?.title || 'Beşiktaş Belediyesi İmar Durumu',
+      authority: 'Beşiktaş Belediyesi',
+      sourceUrl: parsed.source?.url || null,
+      planName: fields.planName || null,
+      planScale: fields.planScale || null,
+      planDate: fields.planDate || null,
+      landUse: fields.landUse || null,
+      taks: fields.taks,
+      emsal: fields.emsal,
+      floors: fields.floors,
+      hmax: fields.hmax,
+      buildingOrder: fields.buildingOrder || null,
+      frontSetback: fields.frontSetback,
+      sideSetback: fields.sideSetback,
+      rearSetback: fields.rearSetback,
+      parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
+      documentType: 'zoning-status-document',
+      extractionConfidence: parsed.record.extractionConfidence || 'high',
+      parcelMatchStatus: 'exact',
+      detectedParcels: [parsed.detectedParcel],
+      fieldEvidence
+    },
+    completeness: {
+      populatedCore: populated.length,
+      requiredTotal: required.length,
+      requiredFound: required.length - missing.length,
+      missing,
+      percentage: Math.round(((required.length - missing.length) / required.length) * 100)
+    },
+    confidence: parsed.record.extractionConfidence || 'high',
+    warnings: parsed.warnings || []
+  };
+}
+
+async function fetchOfficialDocument(inputUrl) {`
+  ],
+  [
+    `  if (url.protocol !== 'https:') throw httpError('Belge bağlantısı HTTPS olmalıdır.', 400, 'DOCUMENT_URL_HTTPS_REQUIRED');`,
+    `  if (url.protocol !== 'https:') throw httpError('Belge bağlantısı HTTPS olmalıdır.', 400, 'DOCUMENT_URL_HTTPS_REQUIRED');
+  if (url.hostname.toLowerCase() === 'keos.besiktas.bel.tr' && url.pathname.toLowerCase().startsWith('/imardurumu')) {
+    throw httpError('Beşiktaş Belediyesi kullanım koşulları otomatik üçüncü taraf işlemini yasaklıyor. Sonucu belediye sitesinden açıp güncel belgeyi Dosya sekmesinden yükleyin.', 403, 'BESIKTAS_AUTOMATIC_READ_FORBIDDEN');
+  }`
+  ]
+]);
+
+await replaceRequired('dist/app.js', [
+  [
+    '<div><span class="section-kicker">Belge okuma motoru · v3.2.0</span><h4 id="documentReaderTitle">Resmî belgeyi otomatik tara</h4></div>',
+    '<div><span class="section-kicker">Belge okuma motoru · v3.4.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>'
+  ],
+  [
+    `        <label class="drawer-check document-parcel-confirm" id="documentParcelConfirmWrap" hidden><input type="checkbox" id="documentParcelConfirm"><span>Belgede ada/parsel metni otomatik okunamadı; bu belgenin sorguladığım parsele ait olduğunu resmî belgeden kontrol ettim.</span></label>
+        <button class="button button-primary" id="readOfficialDocumentButton" type="button">`,
+    `        <label class="drawer-check document-source-confirm"><input type="checkbox" id="documentOfficialSourceConfirm"><span>Bu dosyayı veya metni resmî kurum sayfasından ben aldım ve yalnız kendi sorgum için okunmasını onaylıyorum.</span></label>
+        <label class="drawer-check document-parcel-confirm" id="documentParcelConfirmWrap" hidden><input type="checkbox" id="documentParcelConfirm"><span>Belgede ada/parsel metni otomatik okunamadı; bu belgenin sorguladığım parsele ait olduğunu resmî belgeden kontrol ettim.</span></label>
+        <button class="button button-primary" id="readOfficialDocumentButton" type="button">`
+  ],
+  [
+    `    try {
+      let payload;
+      if (activeTab === 'file') {`,
+    `    try {
+      const officialSourceConfirmed = Boolean($('#documentOfficialSourceConfirm', form)?.checked);
+      if (activeTab !== 'url' && !officialSourceConfirmed) throw new Error('Dosya veya metnin resmî kaynaktan alındığını ve okunmasını onayladığınızı işaretleyin.');
+      let payload;
+      if (activeTab === 'file') {`
+  ],
+  [
+    `      payload.query = state.lastQuery || {};
+      payload.parcel = state.parcelFeature;`,
+    `      payload.query = state.lastQuery || {};
+      payload.parcel = state.parcelFeature;
+      payload.evidenceOrigin = activeTab === 'file' ? 'user-upload' : activeTab === 'text' ? 'user-paste' : 'automatic-url';
+      payload.userConfirmedOfficialSource = officialSourceConfirmed;`
+  ]
+]);
+
+await replaceRequired('netlify/functions/lib/municipality-provider.mjs', [[
+  `    automatedQueryAllowed: record.automatedQueryAllowed === true,
+    configured: record.configured === true,`,
+  `    automatedQueryAllowed: record.automatedQueryAllowed === true,
+    writtenPermissionRequired: record.writtenPermissionRequired === true,
+    configured: record.configured === true,`
+]]);
+
 const css = await readFile('dist/styles.css', 'utf8');
 await writeFile('dist/styles.css', `${css}\n
 /* v3.3.0 nationwide official routing, truthful results and mobile Plan AI */
@@ -959,3 +1363,188 @@ test('v3.3.0 sürümü ve önbellek anahtarları tek sürümdür', async () => {
 `);
 
 console.log('Planlamasyon v3.3.0 ulusal resmî kaynak yönlendirmesi uygulandı.');
+
+// v3.4.0 — izinli belge okuma, kadastro/imar ayrımı, hızlı ilk faz ve harita yedeği.
+await replaceRequired('dist/index.html', [
+  [
+    '            <div class="map-unavailable" id="mapUnavailable" hidden><strong>Harita yüklenemedi</strong><span>İnternet bağlantısını kontrol edip sayfayı yenileyin.</span></div>',
+    `            <div class="map-unavailable" id="mapUnavailable" hidden><strong>Harita yüklenemedi</strong><span>İnternet bağlantısını kontrol edip sayfayı yenileyin.</span></div>
+            <div class="map-base-status" id="mapBaseStatus" hidden role="status"><span>Harita tabanı yüklenemedi; parsel sınırı korunuyor.</span><button type="button" id="mapBaseRetryButton">Yeniden dene</button></div>`
+  ],
+  [
+    `      <div class="analysis-status card" id="analysisStatus" hidden>`,
+    `      <aside class="mobile-result-summary card" id="mobileResultSummary" aria-live="polite">
+        <strong>Hızlı karar özeti</strong>
+        <dl>
+          <div><dt>Parsel</dt><dd id="mobileSummaryParcel">Hazırlanıyor</dd></div>
+          <div><dt>Tapu/kadastro kaydı</dt><dd id="mobileSummaryCadastre">Hazırlanıyor</dd></div>
+          <div><dt>İmar ve yapı hakkı</dt><dd id="mobileSummaryZoning">Kontrol ediliyor</dd></div>
+        </dl>
+      </aside>
+
+      <div class="analysis-status card" id="analysisStatus" hidden>`
+  ],
+  [
+    `        <article class="card parcel-summary">
+          <div class="verified-badge">TKGM açık CBS yanıtı · Bilgi amaçlı</div>`,
+    `        <article class="card parcel-summary" id="cadastralRecordCard">
+          <div class="record-badge-row"><div class="verified-badge">TKGM açık CBS yanıtı · Bilgi amaçlı</div><div class="rights-warning-badge">İmar hakkı değildir</div></div>`
+  ],
+  [
+    '<div><span>Nitelik</span><strong id="metricQuality">—</strong></div>',
+    '<div><span>TKGM kaydındaki taşınmaz niteliği</span><strong id="metricQuality">—</strong></div>'
+  ],
+  [
+    '<article class="card zoning-overview" id="zoningOverview">',
+    '<article class="card zoning-overview" id="zoningRightsCard">'
+  ],
+  [
+    '<span class="section-kicker">İmar özeti</span>',
+    '<span class="section-kicker">İmar planı ve yeni yapı hakkı</span>'
+  ]
+]);
+
+await replaceRequired('dist/app.js', [
+  [
+    `  mapClick: $('#mapClickButton'), mapCaption: $('#mapCaption'), mapLoading: $('#mapLoading'), mapUnavailable: $('#mapUnavailable'),`,
+    `  mapClick: $('#mapClickButton'), mapCaption: $('#mapCaption'), mapLoading: $('#mapLoading'), mapUnavailable: $('#mapUnavailable'),
+  mapBaseStatus: $('#mapBaseStatus'), mapBaseRetryButton: $('#mapBaseRetryButton'),`
+  ],
+  [
+    `  parcelAddress: $('#parcelAddress'), plainExplanation: $('#plainExplanation'), metricArea: $('#metricArea'),`,
+    `  parcelAddress: $('#parcelAddress'), plainExplanation: $('#plainExplanation'), metricArea: $('#metricArea'),
+  mobileResultSummary: $('#mobileResultSummary'), mobileSummaryParcel: $('#mobileSummaryParcel'), mobileSummaryCadastre: $('#mobileSummaryCadastre'), mobileSummaryZoning: $('#mobileSummaryZoning'), summaryGrid: $('#summaryGrid'),`
+  ],
+  [
+    `  syncTimer: null, syncInProgress: false, accountSyncEnabled: false`,
+    `  syncTimer: null, syncInProgress: false, accountSyncEnabled: false,
+  mapBaseLayer: null, mapBaseFallbackActivated: false, mapBaseUserSelected: false, mapBaseLoaded: false`
+  ]
+]);
+
+await replaceRequired('netlify/functions/analyze.mjs', [
+  ['OPEN_OFFICIAL_SOURCE_TIMEOUT_MS: 6000,', 'OPEN_OFFICIAL_SOURCE_TIMEOUT_MS: 3200,'],
+  ['OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 16000,', 'OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 9000,'],
+  ['PUBLIC_PLAN_COVERAGE_TIMEOUT_MS: 8000,', 'PUBLIC_PLAN_COVERAGE_TIMEOUT_MS: 5000,'],
+  ['PUBLIC_PLAN_RECORD_TOTAL_TIMEOUT_MS: 9000,', 'PUBLIC_PLAN_RECORD_TOTAL_TIMEOUT_MS: 5500,'],
+  ['PUBLIC_PLAN_RECORD_TIMEOUT_MS: 4000,', 'PUBLIC_PLAN_RECORD_TIMEOUT_MS: 2500,'],
+  ['MUNICIPALITY_EDEVLET_DISCOVERY_TIMEOUT_MS: 3500,', 'MUNICIPALITY_EDEVLET_DISCOVERY_TIMEOUT_MS: 2000,'],
+  ['PLAN_AI_TIMEOUT_MS: 24000,', "PLAN_AI_TIMEOUT_MS: 9000,\n      PLAN_AI_AUTO_ENABLED: 'false',"],
+  ['OVERPASS_TOTAL_TIMEOUT_MS: 8000,', 'OVERPASS_TOTAL_TIMEOUT_MS: 7000,'],
+  ['OVERPASS_TIMEOUT_MS: 3500,', 'OVERPASS_TIMEOUT_MS: 2800,'],
+  ['        60_000,', '        15_000,'],
+  ['        20_000,', '        10_000,']
+]);
+
+await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
+  [
+    `  const openSourceScan = await settleWithin(
+    discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
+    18000,
+    () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
+  );
+  const planAiResult = await settleWithin(
+    enhanceZoningWithPlanAI({ parcel, query, providerDiscovery, planContext, openSourceScan, env: fastEnv, fetchImpl }),
+    26000,
+    () => unavailablePlanAi(fastEnv, 'Plan AI süre sınırı içinde yanıt vermedi; diğer resmî kaynak sonuçları gösteriliyor.')
+  );`,
+    `  const openSourceScan = await settleWithin(
+    discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
+    10_000,
+    () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
+  );
+  const planAiAutoEnabled = String(fastEnv.PLAN_AI_AUTO_ENABLED ?? 'false').toLowerCase() === 'true';
+  const planAiResult = planAiAutoEnabled
+    ? await settleWithin(
+      enhanceZoningWithPlanAI({ parcel, query, providerDiscovery, planContext, openSourceScan, env: fastEnv, fetchImpl }),
+      10_000,
+      () => unavailablePlanAi(fastEnv, 'Plan AI süre sınırı içinde yanıt vermedi; diğer resmî kaynak sonuçları gösteriliyor.')
+    )
+    : unavailablePlanAi(fastEnv, 'Hızlı ilk sonuç için Plan AI otomatik beklenmedi. İsterseniz Plan AI panelinden mevcut sonucu ayrıca açıklatabilirsiniz.');`
+  ],
+  [
+    `  configuration.planAiEnabled = Boolean(planAi?.enabled);`,
+    `  configuration.planAiAutoEnabled = planAiAutoEnabled;
+  configuration.planAiEnabled = Boolean(planAi?.enabled);`
+  ],
+  ["configuration.boundedAnalysisVersion = '3.3.0';", "configuration.boundedAnalysisVersion = '3.4.0';"]
+]);
+
+await replaceRequired('netlify/functions/lib/municipality-provider.mjs', [
+  [
+    `    machineReadableCandidate: false,
+    automatedQueryAllowed: false
+  }
+];`,
+    `    machineReadableCandidate: false,
+    automatedQueryAllowed: false
+  },
+  {
+    province: 'İstanbul', district: 'Beşiktaş',
+    id: 'istanbul-besiktas-imar-durumu',
+    status: 'manual-only',
+    accessMode: 'manual-only',
+    kind: 'municipality-portal',
+    title: 'Beşiktaş Belediyesi İmar Durumu',
+    provider: 'Beşiktaş Belediyesi',
+    url: 'https://besiktas.bel.tr/',
+    termsUrl: 'https://keos.besiktas.bel.tr/imardurumu/legal.aspx',
+    note: 'Beşiktaş Belediyesi sitesinden E-Belediye / İmar Durumu hizmetini açın. Yayınlanan koşullar üçüncü taraf otomatik işlemini yasakladığı için Planlamasyon bu portalı taramaz; indirdiğiniz güncel resmî belgeyi kullanıcı onayıyla okuyabilir.',
+    verifiedAt: '2026-08-25',
+    machineReadableCandidate: false,
+    writtenPermissionRequired: true,
+    automatedQueryAllowed: false
+  }
+];`
+  ],
+  [
+    `      automatedQueryAllowed: service.automatedQueryAllowed === true,
+      configured: service.configured === true,`,
+    `      automatedQueryAllowed: service.automatedQueryAllowed === true,
+      writtenPermissionRequired: service.writtenPermissionRequired === true,
+      configured: service.configured === true,`
+  ]
+]);
+
+for (const file of [
+  ...await textFiles('dist'),
+  ...await textFiles('netlify'),
+  ...await textFiles('src'),
+  ...await textFiles('functions'),
+  ...await textFiles('tests')
+]) {
+  let text = await readFile(file, 'utf8');
+  text = text
+    .replaceAll('v3\\.3\\.0', 'v3\\.4\\.0')
+    .replaceAll('3\\.3\\.0', '3\\.4\\.0')
+    .replaceAll('v3.3.0', 'v3.4.0')
+    .replaceAll('3.3.0', '3.4.0');
+  await writeFile(file, text);
+}
+
+const packageJson340 = JSON.parse(await readFile('package.json', 'utf8'));
+packageJson340.version = '3.4.0';
+const checkCommands340 = String(packageJson340.scripts.check || '')
+  .split(' && ')
+  .map((command) => command.trim())
+  .filter(Boolean)
+  .filter((command) => command !== 'node --check postbuild-tests/v330-postbuild.test.mjs');
+for (const command of [
+  'node --check netlify/functions/lib/besiktas-keos-imar-parser.mjs',
+  'node --check postbuild-tests/v340-postbuild.test.mjs'
+]) {
+  if (!checkCommands340.includes(command)) checkCommands340.push(command);
+}
+packageJson340.scripts.check = [...new Set(checkCommands340)].join(' && ');
+await writeFile('package.json', `${JSON.stringify(packageJson340, null, 2)}\n`);
+await rm('postbuild-tests/v330-postbuild.test.mjs', { force: true });
+
+const wrangler340 = (await readFile('wrangler.toml', 'utf8'))
+  .replace('OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS = "16000"', 'OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS = "9000"')
+  .replace(
+    'PLAN_AI_TIMEOUT_MS = "24000"',
+    'PLAN_AI_TIMEOUT_MS = "24000"\nPLAN_AI_AUTO_ENABLED = "false"'
+  );
+await writeFile('wrangler.toml', wrangler340);
+
+console.log('Planlamasyon v3.4.0 güvenli belge okuma ve hızlı karar sürümü uygulandı.');

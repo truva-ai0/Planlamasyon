@@ -1,0 +1,715 @@
+import { compareZoningRecords, normalizeZoningFields } from './analysis-core.mjs';
+import { discoverPublicPlanContext } from './plan-context-client.mjs';
+import { discoverPublicPlanRecords } from './plan-record-client.mjs';
+import { discoverMunicipalityProvider } from './municipality-provider.mjs';
+import { discoverOpenOfficialZoning } from './open-official-source-client.mjs';
+import { enhanceZoningWithPlanAI } from './plan-ai-client.mjs';
+
+const CACHE = globalThis.__PLANLAMASYON_ZONING_CACHE__ || new Map();
+globalThis.__PLANLAMASYON_ZONING_CACHE__ = CACHE;
+
+export async function resolveZoning({ parcel, query, evidence, env = process.env, fetchImpl = globalThis.fetch }) {
+  const key = parcelKey(parcel, query);
+  const records = [];
+  const diagnostics = [];
+  const fastEnv = withDefaultEnv(env, {
+    ZONING_CONNECTOR_TIMEOUT_MS: 4200,
+    PUBLIC_PLAN_COVERAGE_TIMEOUT_MS: 3200,
+    PUBLIC_PLAN_RECORD_TOTAL_TIMEOUT_MS: 3800,
+    PUBLIC_PLAN_RECORD_TIMEOUT_MS: 1700,
+    MUNICIPALITY_EDEVLET_DISCOVERY_TIMEOUT_MS: 1500,
+    OPEN_OFFICIAL_SOURCE_MAX_CANDIDATES: 12,
+    OPEN_OFFICIAL_SOURCE_TIMEOUT_MS: 2600,
+    OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 5600,
+    OPEN_OFFICIAL_SOURCE_CONCURRENCY: 3,
+    PLAN_AI_MAX_SOURCES: 3,
+    PLAN_AI_SOURCE_TIMEOUT_MS: 1500,
+    PLAN_AI_EVIDENCE_TOTAL_BUDGET_MS: 2600,
+    PLAN_AI_TIMEOUT_MS: 6000,
+    PLAN_AI_MAX_TOKENS: 1800
+  });
+  const planContextPromise = settleWithin(
+    discoverPublicPlanContext({ geometry: parcel?.geometry, env: fastEnv, fetchImpl }),
+    9000,
+    () => unavailablePlanContext('Plan kapsamı servisi süre sınırı içinde yanıt vermedi.')
+  );
+  const publicPlanRecordsPromise = settleWithin(
+    discoverPublicPlanRecords({ parcel, query, env: fastEnv, fetchImpl }),
+    10000,
+    () => unavailablePlanRecords('Resmî plan kayıtları süre sınırı içinde yanıt vermedi.')
+  );
+  const providerDiscoveryPromise = settleWithin(
+    discoverMunicipalityProvider({ parcel, query, env: fastEnv, fetchImpl }),
+    5000,
+    () => unavailableProviderDiscovery('Belediye kaynak keşfi süre sınırı içinde tamamlanamadı.')
+  );
+
+  const registryRecord = findRegistryRecord(fastEnv.VERIFIED_ZONING_JSON, key, parcel, query);
+  if (registryRecord) records.push(normalizeProviderRecord(registryRecord, {
+    id: 'verified-registry', title: 'Planlamasyon Doğrulanmış İmar Kaydı', provider: registryRecord.authority || 'Yetkili veri kaydı', trust: 'verified'
+  }));
+
+  const connectors = buildConnectors(fastEnv, parcel, query);
+  const configuration = {
+    automaticZoningConfigured: Boolean(registryRecord || connectors.length),
+    connectorIds: connectors.map((connector) => connector.id),
+    publicPlanCoverageEnabled: String(fastEnv.PUBLIC_PLAN_COVERAGE_ENABLED ?? 'true').toLowerCase() === 'true'
+  };
+  if (connectors.length) {
+    const connectorResults = await Promise.allSettled(connectors.map((connector) => settleWithin(fetchConnector(connector, { parcel, query }, fetchImpl, fastEnv), 8000, () => null)));
+    connectorResults.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value) records.push(result.value);
+      else if (result.status === 'rejected') diagnostics.push({ connector: connectors[index].id, message: safeMessage(result.reason) });
+    });
+  }
+
+  if (evidence?.confirmed === true) {
+    const parcelMatchStatus = String(evidence.parcelMatchStatus || '').toLowerCase();
+    const documentType = String(evidence.documentType || '').toLowerCase();
+    const parcelAccepted = parcelMatchStatus === 'exact' || (parcelMatchStatus === 'unverified' && evidence.parcelConfirmed === true) || (!parcelMatchStatus && evidence.parcelConfirmed !== false);
+    const documentEligible = !['plan-announcement', 'public-plan-record'].includes(documentType);
+    if (parcelMatchStatus === 'mismatch') diagnostics.push({ connector: 'user-official-document', message: 'Yüklenen belge ada/parseli sorguyla eşleşmediği için uygulanmadı.' });
+    else if (!parcelAccepted) diagnostics.push({ connector: 'user-official-document', message: 'Yüklenen belgenin bu parsele ait olduğu onaylanmadığı için uygulanmadı.' });
+    else if (!documentEligible) diagnostics.push({ connector: 'user-official-document', message: 'Tarihsel plan/askı kaydı güncel yapılaşma hakkı olarak uygulanmadı.' });
+    else records.push(normalizeProviderRecord(evidence, {
+      id: evidence.documentHash ? `user-official-document-${String(evidence.documentHash).slice(0, 16)}` : 'user-official-document',
+      title: evidence.sourceTitle || evidence.planName || 'Kullanıcının eklediği resmî imar belgesi',
+      provider: evidence.authority || 'Belgeyi düzenleyen idare',
+      trust: 'user-evidence',
+      url: evidence.sourceUrl || null,
+      note: evidence.parserVersion
+        ? `Belge Planlamasyon ${evidence.parserVersion} okuma motoruyla tarandı ve kullanıcı tarafından kontrol edilerek onaylandı. Ada/parsel durumu: ${parcelMatchStatus || 'kullanıcı onayı'}. Ruhsat öncesinde yetkili idare teyidi gerekir.`
+        : 'Değerler kullanıcı tarafından resmî belgeden girildi; Planlamasyon belge güncelliğini bağımsız olarak doğrulamaz.'
+    }));
+  }
+
+  const [basePlanContext, publicPlanRecords, providerDiscovery] = await Promise.all([planContextPromise, publicPlanRecordsPromise, providerDiscoveryPromise]);
+  const planContext = mergePlanContext(basePlanContext, publicPlanRecords);
+
+  // Önce açık resmî kaynak sonucu alınır. Böylece belediye portalında POST/form ile elde edilen
+  // parsel sonucu yeniden GET edilmeye çalışılmadan doğrudan Plan AI kanıtına aktarılabilir.
+  const openSourceScan = await settleWithin(
+    discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
+    10_000,
+    () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
+  );
+  const planAiAutoEnabled = String(fastEnv.PLAN_AI_AUTO_ENABLED ?? 'false').toLowerCase() === 'true';
+  const planAiResult = planAiAutoEnabled
+    ? await settleWithin(
+      enhanceZoningWithPlanAI({ parcel, query, providerDiscovery, planContext, openSourceScan, env: fastEnv, fetchImpl }),
+      10_000,
+      () => unavailablePlanAi(fastEnv, 'Plan AI süre sınırı içinde yanıt vermedi; diğer resmî kaynak sonuçları gösteriliyor.')
+    )
+    : unavailablePlanAi(fastEnv, 'Hızlı ilk sonuç için Plan AI otomatik beklenmedi. İsterseniz Plan AI panelinden mevcut sonucu ayrıca açıklatabilirsiniz.');
+  if (Array.isArray(openSourceScan?.records)) records.push(...openSourceScan.records);
+  if (Array.isArray(openSourceScan?.diagnostics)) diagnostics.push(...openSourceScan.diagnostics);
+  if (Array.isArray(planContext?.diagnostics)) diagnostics.push(...planContext.diagnostics);
+  if (Array.isArray(providerDiscovery?.diagnostics)) diagnostics.push(...providerDiscovery.diagnostics);
+  configuration.nationalProviderDiscoveryEnabled = true;
+  configuration.municipalityProviderStatus = providerDiscovery?.status || 'unavailable';
+  configuration.municipalityConnectorCount = providerDiscovery?.automaticConnectorCount || 0;
+  configuration.embeddedMunicipalityCatalog = Boolean(providerDiscovery?.catalog?.embedded);
+  configuration.embeddedMunicipalityCatalogRecords = Number(providerDiscovery?.catalog?.recordCount || 0);
+  configuration.embeddedMunicipalityCatalogMatches = Number(providerDiscovery?.catalog?.matchCount || 0);
+  configuration.municipalityResultCapability = providerDiscovery?.resultCapability || 'official-routing-only';
+  configuration.publicPlanMetadataAvailable = Boolean(planContext?.metadata && Object.keys(planContext.metadata).length);
+  configuration.publicPlanRecordDiscoveryEnabled = String(fastEnv.PUBLIC_PLAN_RECORD_DISCOVERY_ENABLED ?? 'true').toLowerCase() === 'true';
+  configuration.publicPlanRecordCount = Number(planContext?.records?.length || 0);
+  configuration.embeddedPublicPlanRecordCount = Number(planContext?.publicRecords?.embeddedCount || 0);
+  configuration.openOfficialSourceScanEnabled = true;
+  configuration.openOfficialSourceScanExhausted = Boolean(openSourceScan?.exhausted);
+  configuration.openOfficialSourceScanIncomplete = openSourceScan?.status === 'incomplete';
+  configuration.openOfficialSourceScanBudgetLimited = Boolean(openSourceScan?.budgetLimited);
+  configuration.openOfficialSourceAttemptCount = Number(openSourceScan?.attemptedCount || 0);
+  configuration.openOfficialSourceReachableCount = Number(openSourceScan?.reachableCount || 0);
+  configuration.openOfficialSourceFoundRecordCount = Number(openSourceScan?.foundRecordCount || 0);
+  configuration.openOfficialSourceFoundFieldCount = Number(openSourceScan?.foundFieldCount || 0);
+
+  const planAi = planAiResult || unavailablePlanAi(fastEnv, 'Plan AI sonucu alınamadı.');
+  if (planAi?.record) records.push(planAi.record);
+  configuration.planAiAutoEnabled = planAiAutoEnabled;
+  configuration.planAiEnabled = Boolean(planAi?.enabled);
+  configuration.planAiConfigured = Boolean(planAi?.configured);
+  configuration.planAiStatus = planAi?.status || 'unavailable';
+  configuration.planAiModel = planAi?.model || null;
+  configuration.planAiEvidenceCount = Number(planAi?.evidenceCount || 0);
+  configuration.planAiEvidenceBackedFieldCount = Number(planAi?.evidenceBackedFields?.length || 0);
+  configuration.boundedAnalysis = true;
+  configuration.boundedAnalysisVersion = '3.4.0';
+
+  const publicPlanRecord = buildPublicPlanMetadataRecord(planContext);
+  if (publicPlanRecord) records.push(publicPlanRecord);
+
+  const usable = records.filter((record) => record && hasAnyZoningField(record.fields));
+  if (!usable.length) {
+    const manualOnly = shouldUseManualOnlyStatus(providerDiscovery);
+    configuration.manualOnly = manualOnly;
+    return {
+      status: manualOnly ? 'manual-only' : 'unavailable',
+      manualOnly,
+      conflict: false,
+      fields: normalizeZoningFields({}),
+      sources: dedupeSources([...officialFallbackSources(parcel, query, providerDiscovery), ...(openSourceScan?.sources || []), ...(providerDiscovery?.sources || []), ...(planContext?.sources || [])]),
+      sourceScan: publicSourceScan(openSourceScan),
+      planAi,
+      planContext,
+      publicPlanRecords,
+      providerDiscovery,
+      configuration,
+      diagnostics,
+      message: openSourceScan?.exhausted
+        ? `${openSourceScan.attemptedCount || 0} e-Devletsiz açık resmî kaynak sırayla denendi. ${planContext?.records?.length
+          ? `Ada-parsel ile eşleşen ${planContext.records.length} resmî plan/askı kaydı bulundu; ancak bu kayıt güncel TAKS, emsal, kat ve ruhsat hakkı değildir.`
+          : planContext?.coverageStatus === 'available'
+            ? 'Kesinleşmiş plan kapsamı bulundu; fakat güncel yapılaşma değerleri açık kaynaklardan alınamadı.'
+            : manualOnly
+              ? 'Otomatik okunabilen güncel yapılaşma değeri bulunamadı; bu parsel için resmî imar portalında manuel sorgu gerekir.'
+              : 'Güncel TAKS, emsal, kat veya çekme mesafesi veren açık bir sonuç bulunamadı.'}`
+        : 'Açık resmî kaynak taraması tamamlanamadığı için yapılaşma hesabı üretilemedi.'
+    };
+  }
+
+  const comparison = compareZoningRecords(usable);
+  if (comparison.conflict) {
+    return {
+      status: 'conflict',
+      conflict: true,
+      conflictFields: comparison.fields,
+      fields: normalizeZoningFields({}),
+      sources: dedupeSources([...usable.map((record) => record.source), ...(openSourceScan?.sources || []), ...(providerDiscovery?.sources || []), ...(planContext?.sources || [])]),
+      sourceScan: publicSourceScan(openSourceScan),
+      planAi,
+      planContext,
+      publicPlanRecords,
+      providerDiscovery,
+      configuration,
+      diagnostics,
+      message: 'İmar kaynakları birbiriyle çeliştiği için otomatik hesaplama durduruldu.'
+    };
+  }
+
+  const selected = selectBestRecord(usable);
+  const merged = mergeComplementaryZoningRecords(usable, selected);
+  const selectedStatus = selected.source.trust === 'user-evidence'
+    ? 'user-evidence'
+    : selected.source.trust === 'verified'
+      ? 'verified'
+      : selected.source.trust === 'ai-assisted-official'
+        ? 'ai-assisted-official'
+        : 'public-plan-metadata';
+  const manualOnly = selectedStatus === 'public-plan-metadata' && shouldUseManualOnlyStatus(providerDiscovery);
+  configuration.manualOnly = manualOnly;
+  if (merged.conflictFields.length) diagnostics.push({
+    connector: 'zoning-safe-merge',
+    message: `Tamamlayıcı kaynaklarda birleştirilemeyen alanlar: ${merged.conflictFields.join(', ')}.`
+  });
+  return {
+    status: selectedStatus,
+    manualOnly,
+    conflict: false,
+    fields: merged.fields,
+    fieldSources: merged.fieldSources,
+    selectedSource: selected.source,
+    sources: dedupeSources([selected.source, ...usable.map((record) => record.source), ...(openSourceScan?.sources || []), ...(providerDiscovery?.sources || []), ...(planContext?.sources || [])]),
+    sourceScan: publicSourceScan(openSourceScan),
+    planAi,
+    planContext,
+    publicPlanRecords,
+    providerDiscovery,
+    configuration,
+    diagnostics,
+    message: selected.message || (selectedStatus === 'public-plan-metadata'
+      ? 'Kamuya açık plan metaverisi bulundu; yapılaşma hakları için yetkili imar verisi ayrıca gereklidir.'
+      : null)
+  };
+}
+
+
+function publicSourceScan(scan = {}) {
+  if (!scan || typeof scan !== 'object') return scan;
+  const { aiEvidence, ...publicScan } = scan;
+  return publicScan;
+}
+
+function mergePlanContext(base = {}, publicRecords = {}) {
+  const records = Array.isArray(publicRecords?.records) ? publicRecords.records : [];
+  // Askı/ilan kayıtları tarihsel kanıttır; güncel plan adı, ölçek veya yapılaşma
+  // koşulu gibi davranmamalıdır. Güncel plan metaverisi yalnızca plan katmanı
+  // sağlayıcısından gelirse ana imar özetine taşınır.
+  const metadata = base?.metadata && typeof base.metadata === 'object' ? base.metadata : {};
+  const sources = dedupeSources([...(base?.sources || []), ...(publicRecords?.sources || [])]);
+  const diagnostics = [...(base?.diagnostics || []), ...(publicRecords?.diagnostics || [])].slice(0, 24);
+  const coverageStatus = base?.status || 'unavailable';
+  const available = coverageStatus === 'available' || records.length > 0;
+  return {
+    ...base,
+    status: available ? 'available' : coverageStatus || publicRecords?.status || 'unavailable',
+    coverageStatus,
+    matches: Array.isArray(base?.matches) ? base.matches : [],
+    metadata,
+    sources,
+    diagnostics,
+    records,
+    publicRecords,
+    message: records.length
+      ? `${coverageStatus === 'available' ? `${base.message || 'Kamu plan kapsamı bulundu.'} ` : ''}${publicRecords.message || `${records.length} resmî plan kaydı bulundu.`}`.trim()
+      : base?.message || publicRecords?.message || 'Kamu plan kaydı alınamadı.'
+  };
+}
+
+function buildPublicPlanMetadataRecord(planContext) {
+  const metadata = planContext?.metadata || {};
+  if (!Object.keys(metadata).some((key) => metadata[key] != null && metadata[key] !== '')) return null;
+  const fields = normalizeZoningFields({
+    ...(planContext?.zoningFields || {}),
+    planName: metadata.planName,
+    planNumber: metadata.planNumber,
+    planScale: metadata.planScale,
+    planDate: metadata.planDate,
+    authority: metadata.authority
+  });
+  if (!hasAnyZoningField(fields)) return null;
+  const metadataSource = (planContext?.sources || []).find((source) => source.kind === 'official-plan-metadata') || planContext?.sources?.[0];
+  return {
+    fields,
+    source: {
+      id: 'eplan-public-metadata',
+      title: metadata.planName || metadataSource?.title || 'Kamuya Açık e-Plan / TUCBS Plan Metaverisi',
+      provider: metadata.authority || metadataSource?.provider || 'Çevre, Şehircilik ve İklim Değişikliği Bakanlığı / TUCBS',
+      url: metadataSource?.url || 'https://tucbs.gov.tr/',
+      kind: 'official-plan-metadata',
+      trust: hasActionableFields(fields) ? 'verified' : 'public-information',
+      note: hasActionableFields(fields)
+        ? 'Kamuya açık resmî e-Plan/TUCBS katmanından yapılaşma öznitelikleri otomatik okundu.'
+        : 'Plan adı, ölçek, işlem numarası, tarih veya yetkili idare gibi açık plan metaverileri kullanıldı. Bu kayıt TAKS, emsal, kat veya ruhsat hakkı değildir.',
+      documentDate: metadata.planDate || null,
+      retrievedAt: new Date().toISOString()
+    },
+    message: hasActionableFields(fields) ? 'Kamuya açık resmî plan katmanında yapılaşma koşulu bulundu.' : 'Kamuya açık plan metaverisi bulundu.'
+  };
+}
+
+function buildConnectors(env, parcel, query) {
+  const connectors = [];
+  if (env.PLANLAMASYON_ZONING_API_URL) connectors.push({
+    id: 'planlamasyon-zoning-provider',
+    url: env.PLANLAMASYON_ZONING_API_URL,
+    token: env.PLANLAMASYON_ZONING_API_TOKEN,
+    title: 'Planlamasyon İmar Veri Sağlayıcısı',
+    provider: 'Yapılandırılmış imar servisi',
+    trust: 'verified'
+  });
+  if (env.EPLAN_ADAPTER_URL) connectors.push({
+    id: 'eplan-adapter',
+    url: env.EPLAN_ADAPTER_URL,
+    token: env.EPLAN_ADAPTER_TOKEN,
+    title: 'e-Plan Entegrasyon Adaptörü',
+    provider: 'e-Plan / yetkili adaptör',
+    trust: 'verified'
+  });
+
+  const configured = parseJson(env.MUNICIPALITY_CONNECTORS_JSON, []);
+  const municipalityConnectors = Array.isArray(configured) ? configured : Array.isArray(configured?.connectors) ? configured.connectors : [];
+  for (const connector of municipalityConnectors) {
+    if (!connector?.url) continue;
+    if (!matchesLocation(connector, parcel, query)) continue;
+    connectors.push({
+      id: clean(connector.id, 120) || `municipality-${connectors.length + 1}`,
+      url: connector.url,
+      token: connector.tokenEnv ? env[connector.tokenEnv] : connector.token,
+      title: clean(connector.title, 240) || 'Belediye İmar Veri Servisi',
+      provider: clean(connector.provider, 240) || clean(connector.authority, 240) || 'İlgili belediye',
+      trust: 'verified',
+      method: String(connector.method || 'POST').toUpperCase(),
+      priority: Number.isFinite(Number(connector.priority)) ? Number(connector.priority) : 0
+    });
+  }
+  return connectors.sort((a, b) => b.priority - a.priority).slice(0, 8);
+}
+
+async function fetchConnector(connector, payload, fetchImpl, env) {
+  if (typeof fetchImpl !== 'function') throw new Error('Fetch desteği bulunmuyor.');
+  const url = allowedConnectorUrl(connector.url);
+  const timeoutMs = clampInt(env.ZONING_CONNECTOR_TIMEOUT_MS, 2000, 45000, 12000);
+  const cacheKey = `${connector.id}:${parcelKey(payload.parcel, payload.query)}`;
+  const cacheDisabled = String(env.ZONING_CONNECTOR_CACHE_DISABLED ?? 'false').toLowerCase() === 'true';
+  const cached = cacheDisabled ? null : CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const method = connector.method === 'GET' ? 'GET' : 'POST';
+    const requestUrl = new URL(url);
+    if (method === 'GET') {
+      const p = payload.parcel?.properties || {};
+      requestUrl.searchParams.set('province', p.province || payload.query?.province || '');
+      requestUrl.searchParams.set('district', p.district || payload.query?.district || '');
+      requestUrl.searchParams.set('neighbourhood', p.neighbourhood || payload.query?.neighbourhood || '');
+      requestUrl.searchParams.set('neighbourhoodId', p.neighbourhoodId || payload.query?.neighbourhoodId || '');
+      requestUrl.searchParams.set('block', p.block || payload.query?.block || '');
+      requestUrl.searchParams.set('parcel', p.parcel || payload.query?.parcel || '');
+    }
+    const response = await fetchImpl(requestUrl, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+        ...(connector.token ? { Authorization: `Bearer ${String(connector.token).trim()}` } : {})
+      },
+      body: method === 'POST' ? JSON.stringify({
+        parcel: sanitizeParcelPayload(payload.parcel),
+        query: sanitizeQuery(payload.query),
+        requestedFields: ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'setbacks', 'planNotes', 'allowances', 'constraints']
+      }) : undefined,
+      signal: controller.signal
+    });
+    if (response.status === 404 || response.status === 204) return null;
+    if (!response.ok) throw new Error(`${connector.title} ${response.status} yanıtı verdi.`);
+    const json = await response.json();
+    const data = json?.data ?? json?.result ?? json;
+    if (!data || data.found === false) return null;
+    const record = normalizeProviderRecord(data, connector);
+    if (!cacheDisabled) {
+      CACHE.set(cacheKey, { value: record, expiresAt: Date.now() + 15 * 60 * 1000 });
+      trimCache();
+    }
+    return record;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`${connector.title} zaman aşımına uğradı.`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeProviderRecord(input, sourceDefaults) {
+  const data = input?.fields || input?.zoning || input;
+  const fields = normalizeZoningFields(data || {});
+  const sourceInput = input?.source || {};
+  const source = {
+    id: clean(sourceInput.id || sourceDefaults.id, 140),
+    title: clean(sourceInput.title || input?.sourceTitle || sourceDefaults.title, 280),
+    provider: clean(sourceInput.provider || input?.authority || sourceDefaults.provider, 240),
+    url: safeUrl(sourceInput.url || input?.sourceUrl || sourceDefaults.url),
+    kind: 'zoning',
+    trust: sourceDefaults.trust,
+    note: clean(sourceInput.note || input?.note || sourceDefaults.note, 1000),
+    documentDate: clean(input?.documentDate || input?.planDate, 40),
+    documentName: clean(input?.documentName, 260),
+    documentHash: clean(input?.documentHash, 80),
+    parserVersion: clean(input?.parserVersion, 40),
+    extractionConfidence: clean(input?.extractionConfidence, 40),
+    parcelMatchStatus: clean(input?.parcelMatchStatus, 40),
+    fieldEvidence: input?.fieldEvidence && typeof input.fieldEvidence === 'object' ? input.fieldEvidence : {},
+    retrievedAt: new Date().toISOString()
+  };
+  return { fields, source, message: clean(input?.message, 600) };
+}
+
+function withDefaultEnv(env, defaults) {
+  return { ...defaults, ...(env && typeof env === 'object' ? env : {}) };
+}
+
+async function settleWithin(promise, timeoutMs, fallbackFactory) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).catch((error) => fallbackFactory(error)),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(fallbackFactory(codedTimeout())), timeoutMs); })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function codedTimeout() {
+  const error = new Error('Süre sınırı aşıldı.');
+  error.code = 'SOURCE_TIMEOUT';
+  return error;
+}
+
+function unavailablePlanContext(message) {
+  return { status: 'unavailable', coverageStatus: 'unavailable', matches: [], metadata: {}, zoningFields: {}, records: [], sources: [], diagnostics: [{ connector: 'plan-context', message }], message };
+}
+
+function unavailablePlanRecords(message) {
+  return { status: 'unavailable', records: [], sources: [], diagnostics: [{ connector: 'plan-records', message }], successfulSources: 0, embeddedCount: 0, message };
+}
+
+function unavailableProviderDiscovery(message) {
+  return {
+    status: 'national-portals-ready', resultCapability: 'official-routing-only', automaticConnectorCount: 0,
+    authority: null, municipalServices: [], actions: [
+      { id: 'eplan-national', title: 'e-Plan İmar Durumu', provider: 'Çevre, Şehircilik ve İklim Değişikliği Bakanlığı', url: 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html', kind: 'national-portal', accessMode: 'public-portal', status: 'official-portal', note: 'Türkiye geneli resmî imar durumu portalı.' },
+      { id: 'tucbs-national', title: 'TUCBS Coğrafi Açık Veri', provider: 'Ulusal Coğrafi Bilgi Platformu', url: 'https://ucbp.tucbs.gov.tr/cografi-acik-veri-platformu', kind: 'national-geodata', accessMode: 'public-portal', status: 'official-portal', note: 'Kamuya açık coğrafi katmanlar.' }
+    ],
+    sources: [], catalog: { embedded: true, recordCount: 0, matchCount: 0 }, diagnostics: [{ connector: 'municipality-provider', message }], message
+  };
+}
+
+function incompleteSourceScan(message) {
+  return {
+    status: 'incomplete', exhausted: false, budgetLimited: true, attemptedCount: 0, reachableCount: 0,
+    foundRecordCount: 0, foundFieldCount: 0, records: [], sources: [], attempts: [], diagnostics: [{ connector: 'open-official-source-scan', message }], message
+  };
+}
+
+function unavailablePlanAi(env, message) {
+  return {
+    status: 'unavailable', enabled: true, configured: Boolean(env?.NVIDIA_API_KEY), canCalculate: false,
+    fields: {}, actionableFields: [], evidenceBackedFields: [], evidence: [], attempts: [], evidenceCount: 0,
+    message
+  };
+}
+
+function findRegistryRecord(raw, key, parcel, query) {
+  const parsed = parseJson(raw, null);
+  if (!parsed) return null;
+  if (Array.isArray(parsed)) return parsed.find((record) => recordMatches(record, key, parcel, query)) || null;
+  if (typeof parsed === 'object') {
+    if (parsed[key]) return parsed[key];
+    const list = Array.isArray(parsed.records) ? parsed.records : [];
+    return list.find((record) => recordMatches(record, key, parcel, query)) || null;
+  }
+  return null;
+}
+
+function recordMatches(record, key, parcel, query) {
+  if (!record) return false;
+  if (record.key && String(record.key) === key) return true;
+  const p = parcel?.properties || {};
+  const block = String(record.block ?? record.ada ?? '').trim();
+  const parcelNo = String(record.parcel ?? record.parsel ?? '').trim();
+  const neighbourhoodId = String(record.neighbourhoodId ?? record.mahalleId ?? '').trim();
+  return block === String(p.block ?? query?.block ?? '') && parcelNo === String(p.parcel ?? query?.parcel ?? '') && (!neighbourhoodId || neighbourhoodId === String(p.neighbourhoodId ?? query?.neighbourhoodId ?? ''));
+}
+
+function matchesLocation(connector, parcel, query) {
+  const p = parcel?.properties || {};
+  const province = p.province || query?.province || '';
+  const district = p.district || query?.district || '';
+  const provinceKey = normalize(province);
+  const districtKey = normalize(district);
+  if (connector.province && !['*', provinceKey].includes(normalize(connector.province))) return false;
+  if (connector.district && !['*', districtKey].includes(normalize(connector.district))) return false;
+  const provinces = Array.isArray(connector.provinces) ? connector.provinces.map(normalize) : [];
+  const districts = Array.isArray(connector.districts) ? connector.districts.map(normalize) : [];
+  if (provinces.length && !provinces.includes('*') && !provinces.includes(provinceKey)) return false;
+  if (districts.length && !districts.includes('*') && !districts.includes(districtKey)) return false;
+  return true;
+}
+
+function selectBestRecord(records) {
+  const score = (record) => {
+    let value = record.source.trust === 'verified' ? 100 : record.source.trust === 'user-evidence' ? 95 : record.source.trust === 'ai-assisted-official' ? 92 : 30;
+    for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback']) if (record.fields[field] != null) value += 2;
+    if (record.source.url) value += 5;
+    if (record.fields.planName) value += 3;
+    return value;
+  };
+  return [...records].sort((a, b) => score(b) - score(a))[0];
+}
+
+const MERGE_SCALAR_FIELDS = [
+  'landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder',
+  'frontSetback', 'sideSetback', 'rearSetback', 'planName', 'planNumber',
+  'planScale', 'planDate', 'authority', 'planNotes', 'parkingRequired',
+  'roadDedicationPossible', 'floodDataStatus'
+];
+const MERGE_CONFLICT_SENSITIVE_FIELDS = new Set([
+  'landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder',
+  'frontSetback', 'sideSetback', 'rearSetback', 'parkingRequired',
+  'roadDedicationPossible', 'floodDataStatus'
+]);
+const MERGE_PLAN_IDENTITY_FIELDS = ['planName', 'planNumber', 'planScale', 'planDate'];
+
+/**
+ * Aynı parsele ait, birbiriyle çelişmeyen kayıtların boş alanlarını tamamlar.
+ * Her alanın kaynak kaydı korunur; farklı iki dolu değer sessizce ezilmez.
+ */
+export function mergeComplementaryZoningRecords(records = [], preferredRecord = null) {
+  const valid = records.filter((record) => record?.fields && record?.source);
+  if (!valid.length) return { fields: normalizeZoningFields({}), fieldSources: {}, conflictFields: [] };
+  const preferred = preferredRecord && valid.includes(preferredRecord) ? preferredRecord : selectBestRecord(valid);
+  const conflictFields = [];
+  const ordered = [preferred];
+  for (const candidate of valid.filter((record) => record !== preferred).sort((a, b) => recordScore(b) - recordScore(a))) {
+    const identityConflicts = ordered.flatMap((accepted) => mergePlanIdentityConflicts(accepted, candidate));
+    if (identityConflicts.length) {
+      conflictFields.push(...identityConflicts);
+      continue;
+    }
+    ordered.push(candidate);
+  }
+  const input = {};
+  const fieldSources = {};
+
+  for (const field of MERGE_SCALAR_FIELDS) {
+    const candidates = ordered.filter((record) => hasValue(record.fields?.[field]));
+    if (!candidates.length) continue;
+    const unique = new Set(candidates.map((record) => comparableMergeValue(record.fields[field])));
+    if (unique.size > 1 && MERGE_CONFLICT_SENSITIVE_FIELDS.has(field)) {
+      conflictFields.push(field);
+      continue;
+    }
+    const chosen = hasValue(preferred.fields?.[field]) ? preferred : candidates[0];
+    input[field] = chosen.fields[field];
+    fieldSources[field] = publicFieldSource(chosen.source);
+  }
+
+  const allowanceKeys = Object.keys(normalizeZoningFields({}).allowances || {});
+  input.allowances = {};
+  for (const key of allowanceKeys) {
+    const candidates = ordered.filter((record) => {
+      const value = String(record.fields?.allowances?.[key] || 'unknown');
+      return value !== 'unknown';
+    });
+    if (!candidates.length) continue;
+    const unique = new Set(candidates.map((record) => String(record.fields.allowances[key])));
+    if (unique.size > 1) {
+      conflictFields.push(`allowances.${key}`);
+      input.allowances[key] = 'unknown';
+      continue;
+    }
+    input.allowances[key] = candidates[0].fields.allowances[key];
+    fieldSources[`allowances.${key}`] = publicFieldSource(candidates[0].source);
+  }
+
+  input.constraints = [...new Set(ordered.flatMap((record) => Array.isArray(record.fields?.constraints) ? record.fields.constraints : []).filter(Boolean))].slice(0, 30);
+  return {
+    fields: normalizeZoningFields(input),
+    fieldSources,
+    conflictFields: [...new Set(conflictFields)]
+  };
+}
+
+export function shouldUseManualOnlyStatus(providerDiscovery = {}) {
+  const actions = Array.isArray(providerDiscovery?.actions) ? providerDiscovery.actions : [];
+  const services = Array.isArray(providerDiscovery?.municipalServices)
+    ? providerDiscovery.municipalServices
+    : providerDiscovery?.municipalService ? [providerDiscovery.municipalService] : [];
+  return [...actions, ...services].some((item) => {
+    if (!item?.url) return false;
+    const mode = String(item.accessMode || '');
+    const kind = String(item.kind || '');
+    return ['official-login-service', 'public-portal', 'official-search'].includes(mode)
+      || ['municipality-portal', 'official-portal', 'national-portal'].includes(kind);
+  });
+}
+
+function recordScore(record) {
+  let value = record?.source?.trust === 'verified' ? 100 : record?.source?.trust === 'user-evidence' ? 95 : record?.source?.trust === 'ai-assisted-official' ? 92 : 30;
+  for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback']) if (hasValue(record?.fields?.[field])) value += 2;
+  if (record?.source?.url) value += 5;
+  if (record?.fields?.planName) value += 3;
+  return value;
+}
+
+function hasValue(value) { return value != null && value !== ''; }
+function comparableMergeValue(value) {
+  if (typeof value === 'number') return String(Math.round(value * 10000) / 10000);
+  if (typeof value === 'boolean') return String(value);
+  return String(value).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+}
+function mergePlanIdentityConflicts(first, second) {
+  return MERGE_PLAN_IDENTITY_FIELDS.filter((field) => {
+    const firstValue = first?.fields?.[field];
+    const secondValue = second?.fields?.[field];
+    return hasValue(firstValue) && hasValue(secondValue)
+      && comparableMergeValue(firstValue) !== comparableMergeValue(secondValue);
+  });
+}
+function publicFieldSource(source = {}) {
+  return {
+    id: clean(source.id, 140),
+    title: clean(source.title || source.provider, 280),
+    provider: clean(source.provider, 240),
+    trust: clean(source.trust, 60),
+    url: safeUrl(source.url)
+  };
+}
+
+function officialFallbackSources(parcel, query, providerDiscovery) {
+  if (Array.isArray(providerDiscovery?.sources) && providerDiscovery.sources.length) return providerDiscovery.sources;
+  const p = parcel?.properties || {};
+  const location = [p.province || query?.province, p.district || query?.district].filter(Boolean).join(' / ');
+  const search = new URL('https://www.turkiye.gov.tr/arama');
+  search.searchParams.set('aranan', `${p.district || query?.district || ''} Belediyesi İmar Durum Bilgisi Sorgulama`.trim());
+  return [
+    {
+      id: 'eplan-national', title: 'e-Plan Yürürlükteki Planlar ve İmar Durumu', provider: 'Çevre, Şehircilik ve İklim Değişikliği Bakanlığı',
+      url: 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html', kind: 'national-portal', trust: 'lookup-required', note: `${location || 'Parsel'} için yürürlükteki plan, plan notu ve imar durumu bu portalda kontrol edilmelidir.`
+    },
+    {
+      id: 'municipality-official-search', title: 'Belediye İmar Durumu Hizmetini Ara', provider: p.district ? `${p.district} Belediyesi / yetkili idare` : 'Yetkili yerel idare',
+      url: search.toString(), kind: 'municipality-portal', trust: 'lookup-required', note: 'İlgili belediyenin resmî e-Devlet imar hizmeti bu bağlantıdan aranır.'
+    }
+  ];
+}
+
+function dedupeSources(sources) {
+  const seen = new Set();
+  return sources.filter((source) => {
+    const id = source?.id || source?.url || source?.title;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function hasActionableFields(fields) {
+  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'].some((key) => fields?.[key] != null && fields[key] !== '');
+}
+
+function hasAnyZoningField(fields) {
+  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback', 'planName', 'planNotes'].some((key) => fields?.[key] != null && fields[key] !== '');
+}
+
+function parcelKey(parcel, query) {
+  const p = parcel?.properties || {};
+  return [p.neighbourhoodId || query?.neighbourhoodId || p.neighbourhood || query?.neighbourhood, p.block || query?.block, p.parcel || query?.parcel].filter(Boolean).map(String).join(':');
+}
+
+function sanitizeParcelPayload(parcel) {
+  if (!parcel) return null;
+  return {
+    type: 'Feature',
+    geometry: parcel.geometry,
+    properties: {
+      province: clean(parcel.properties?.province, 120), district: clean(parcel.properties?.district, 120), neighbourhood: clean(parcel.properties?.neighbourhood, 160),
+      neighbourhoodId: clean(parcel.properties?.neighbourhoodId, 80), block: clean(parcel.properties?.block, 40), parcel: clean(parcel.properties?.parcel, 40),
+      area: Number.isFinite(Number(parcel.properties?.area)) ? Number(parcel.properties.area) : null, quality: clean(parcel.properties?.quality, 240), mapSheet: clean(parcel.properties?.mapSheet, 120)
+    }
+  };
+}
+
+function sanitizeQuery(query = {}) {
+  return Object.fromEntries(Object.entries(query).slice(0, 20).map(([key, value]) => [clean(key, 60), clean(value, 200)]).filter(([key]) => key));
+}
+
+function allowedConnectorUrl(value) {
+  const url = new URL(String(value));
+  if (url.protocol !== 'https:') throw new Error('İmar bağlantısı HTTPS olmalıdır.');
+  if (isPrivateHost(url.hostname)) throw new Error('Özel ağ adresine imar bağlantısı yapılamaz.');
+  return url.toString();
+}
+
+function isPrivateHost(hostname) {
+  const host = String(hostname).toLowerCase();
+  if (host === 'localhost' || host.endsWith('.local')) return true;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.)/.test(host)) return true;
+  const match = host.match(/^172\.(\d+)\./);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+}
+
+function safeUrl(value) {
+  if (!value) return null;
+  try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; }
+}
+function parseJson(value, fallback) { if (!value) return fallback; try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return fallback; } }
+function normalize(value) { return String(value || '').toLocaleLowerCase('tr-TR').replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9*]/g, ''); }
+function clean(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }
+function clampInt(value, min, max, fallback) { const number = Number(value); return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.trunc(number))) : fallback; }
+function safeMessage(error) { return clean(error?.message || error, 400) || 'Bilinmeyen bağlantı hatası'; }
+function trimCache() { while (CACHE.size > 500) CACHE.delete(CACHE.keys().next().value); }

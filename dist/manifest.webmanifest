@@ -1,0 +1,12 @@
+{
+  "name": "Planlamasyon",
+  "short_name": "Planlamasyon",
+  "description": "Parsel ve doğrulanabilir imar analizi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#06111f",
+  "theme_color": "#06111f",
+  "icons": [
+    { "src": "/assets/brand-mark.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

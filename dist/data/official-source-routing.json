@@ -1,0 +1,38 @@
+{
+  "version": "2026-08-25",
+  "country": "Türkiye",
+  "coverage": {
+    "provinceCount": 81,
+    "mode": "dynamic-official-link-routing",
+    "directCatalogRecordCount": 117,
+    "directCatalogProvinceCount": 29,
+    "directCatalogDistrictPairCount": 94,
+    "automaticDataClaim": false
+  },
+  "portals": {
+    "tkgmParcel": "https://parselsorgu.tkgm.gov.tr/",
+    "eplanImar": "https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html",
+    "eplanPlans": "https://eplan.csb.gov.tr/e-plan/html/acikPlanlar.html?filter=aski",
+    "tucbs": "https://tucbs.gov.tr/",
+    "tucbsOpenData": "https://ucbp.tucbs.gov.tr/cografi-acik-veri-platformu",
+    "eDevletSearch": "https://www.turkiye.gov.tr/arama",
+    "eDevletMunicipalities": "https://www.turkiye.gov.tr/belediyeler",
+    "googleSearch": "https://www.google.com/search"
+  },
+  "policies": {
+    "linkOnly": [
+      "e-Devlet ve e-Plan bağlantıları kullanıcıyı resmî portala yönlendirir; giriş veya form işlemi otomatikleştirilmez.",
+      "Google bağlantısı yalnız resmî alan adlarında keşif aramasıdır; sonuç doğrulanmadan resmî kaynak veya veri sayılmaz."
+    ],
+    "automaticData": [
+      "Yalnız açık lisansı doğrulanmış TUCBS katmanları veya açıkça yetkilendirilmiş kurum adaptörleri otomatik veri adayıdır.",
+      "Ticari kadastro veri kullanımı için TAKPAS sözleşmesi ve ilgili kurum izinleri gerekir."
+    ]
+  },
+  "officialReferences": [
+    "https://www.tkgm.gov.tr/duyurular/tapu-ve-kadastro-verilerinin-paylasimi-hakkinda-yonetmelik",
+    "https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html",
+    "https://www.turkiye.gov.tr/belediyeler",
+    "https://tucbs.gov.tr/sik-sorulan-sorular/"
+  ]
+}

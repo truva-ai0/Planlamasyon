@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="tr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#06111f">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Planlamasyon — gerçek parseli bulun, doğrulanabilen imar kaynaklarını ve yakın çevreyi sade Türkçeyle inceleyin.">
+  <title>Planlamasyon — Planlamanın yeni nesli</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="/styles.css?v=3.4.0">
+  <script>
+    (() => {
+      let theme = 'dark';
+      try {
+        const saved = localStorage.getItem('planlamasyon-theme-v3-2-0');
+        if (saved === 'dark' || saved === 'light') theme = saved;
+      } catch (_) {}
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    })();
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="Planlamasyon ana sayfa">
+        <img class="brand-mark" src="/assets/brand-mark.png" alt="" width="54" height="50">
+        <span class="brand-name">PLANLAMASYON</span>
+      </a>
+      <div class="header-actions">
+        <button class="theme-switch" id="themeSwitch" type="button" aria-label="Açık temaya geç" aria-pressed="false">
+          <span aria-hidden="true" class="theme-icon theme-icon-moon">☾</span>
+          <span aria-hidden="true" class="theme-icon theme-icon-sun">☀</span>
+          <span class="theme-knob"></span>
+        </button>
+        <span class="profile-identity" id="profileIdentity" hidden></span>
+        <div class="profile-wrap">
+          <button class="profile-button" id="profileButton" type="button" aria-label="Profil menüsünü aç" aria-expanded="false">
+            <span class="profile-initials" id="profileInitials" hidden></span>
+            <svg id="profileSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 21c.45-4.25 3.15-6.5 7.2-6.5s6.75 2.25 7.2 6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <div class="profile-menu" id="profileMenu" hidden>
+            <div class="profile-menu-user" id="profileMenuUser" hidden><strong id="profileMenuName">—</strong><span id="profileMenuEmail">—</span></div>
+            <button data-panel="auth" id="profileAuthButton">Giriş Yap / Kayıt Ol</button>
+            <button data-panel="works">Çalışmalarım</button>
+            <button data-panel="favorites">Favorilerim</button>
+            <button data-panel="requests">Taleplerim</button>
+            <button data-panel="account">Hesabım</button>
+            <button class="danger" data-panel="logout" id="profileLogoutButton" hidden>Çıkış</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="heroTitle">
+      <div class="hero-image" aria-hidden="true"></div>
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-content">
+        <div class="eyebrow"><span class="live-dot"></span> Türkiye için sade parsel ve imar analizi</div>
+        <h1 id="heroTitle">Planlamanın <span>yeni nesli.</span></h1>
+        <p>Parselinizi bulun. Planlamasyon kadastro, doğrulanabilen plan bilgileri, mevzuat ve yakın çevre verilerini tek sonuçta toplasın.</p>
+        <div class="hero-actions">
+          <button class="button button-primary" id="startButton" type="button">Projeni Başlat <span aria-hidden="true">→</span></button>
+          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.2</small></button>
+        </div>
+        <div class="trust-row">
+          <span>✓ Kaynak–sonuç ilişkisi</span>
+          <span>♢ Kaynak yoksa sayı yok</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section parcel-section" id="parcelSection" aria-labelledby="parcelTitle">
+      <div class="section-heading">
+        <span class="section-kicker">Parsel sorgulama</span>
+        <h2 id="parcelTitle">Parselinizi bulun</h2>
+        <p>İl, ilçe, mahalle veya köy, ada ve parsel bilgilerini seçin. Gerçek kadastro geometrisi haritada gösterilir.</p>
+      </div>
+
+      <div class="connection-banner" id="connectionBanner" role="status" aria-live="polite">
+        <span class="status-dot is-loading"></span>
+        <div><strong>TKGM bağlantısı kontrol ediliyor</strong><span>İdari listeler ve parsel geometrisi sunucu üzerinden alınıyor.</span></div>
+      </div>
+
+      <div class="query-layout">
+        <form class="query-card card" id="parcelForm" novalidate>
+          <div class="field">
+            <label for="provinceSelect">İl</label>
+            <select id="provinceSelect" required disabled><option value="">İller yükleniyor…</option></select>
+          </div>
+          <div class="field">
+            <label for="districtSelect">İlçe</label>
+            <select id="districtSelect" required disabled><option value="">Önce il seçin</option></select>
+          </div>
+          <div class="field">
+            <label for="neighbourhoodSelect">Mahalle / Köy</label>
+            <select id="neighbourhoodSelect" required disabled><option value="">Önce ilçe seçin</option></select>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="blockInput">Ada</label>
+              <input id="blockInput" inputmode="numeric" autocomplete="off" placeholder="Ada numarası" required disabled>
+            </div>
+            <div class="field">
+              <label for="parcelInput">Parsel</label>
+              <input id="parcelInput" inputmode="numeric" autocomplete="off" placeholder="Parsel numarası" required disabled>
+            </div>
+          </div>
+          <button class="button button-primary submit-button" id="parcelSubmit" type="submit" disabled>
+            <span class="button-text">Parseli Sorgula ve Analiz Et</span><span class="button-spinner" hidden></span>
+          </button>
+          <p class="field-help">Her sorgu tek parsel içindir. Sonuçlar bilgi amaçlıdır; bağlayıcı işlemde yetkili idare kaydı esas alınır.</p>
+        </form>
+
+        <article class="map-card card">
+          <div class="map-head">
+            <div><span class="section-kicker">Canlı konum</span><h3>Parsel haritası</h3></div>
+            <div class="map-actions">
+              <button class="mini-button" id="resetMapButton" type="button">Türkiye</button>
+              <button class="mini-button" id="mapClickButton" type="button" aria-pressed="false">Haritadan sorgula</button>
+            </div>
+          </div>
+          <div class="map-shell">
+            <div id="parcelMap" aria-label="Parsel haritası"></div>
+            <div class="map-loading" id="mapLoading" hidden><span class="button-spinner"></span><strong>Harita güncelleniyor</strong></div>
+            <div class="map-unavailable" id="mapUnavailable" hidden><strong>Harita yüklenemedi</strong><span>İnternet bağlantısını kontrol edip sayfayı yenileyin.</span></div>
+            <div class="map-base-status" id="mapBaseStatus" hidden role="status"><span>Harita tabanı yüklenemedi; parsel sınırı korunuyor.</span><button type="button" id="mapBaseRetryButton">Yeniden dene</button></div>
+          </div>
+          <div class="map-caption" id="mapCaption"><span class="pin-icon">⌖</span><span>Türkiye</span></div>
+          <div class="info-note">Harita tabanı ile kadastro geometrisi farklı kaynaklardır. Kesin sınır ve aplikasyon için yetkili kadastro birimine başvurulur.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section result-section" id="resultSection" hidden aria-labelledby="resultTitle">
+      <div class="result-topline">
+        <div><span class="section-kicker">Parsel bulundu</span><h2 id="resultTitle">Parseliniz hakkında</h2></div>
+        <button class="favorite-button" id="favoriteButton" type="button">☆ Favorilere Ekle</button>
+      </div>
+
+      <div class="analysis-progress card" id="analysisProgress" role="status" aria-live="polite">
+        <span class="button-spinner dark-spinner"></span>
+        <div><strong>Plan ve çevre kaynakları inceleniyor</strong><span>Parsel bulundu. Doğrulanabilen yapılaşma koşulları ve yakın çevre hazırlanıyor.</span></div>
+      </div>
+
+      <aside class="mobile-result-summary card" id="mobileResultSummary" aria-live="polite">
+        <strong>Hızlı karar özeti</strong>
+        <dl>
+          <div><dt>Parsel</dt><dd id="mobileSummaryParcel">Hazırlanıyor</dd></div>
+          <div><dt>Tapu/kadastro kaydı</dt><dd id="mobileSummaryCadastre">Hazırlanıyor</dd></div>
+          <div><dt>İmar ve yapı hakkı</dt><dd id="mobileSummaryZoning">Kontrol ediliyor</dd></div>
+        </dl>
+      </aside>
+
+      <div class="analysis-status card" id="analysisStatus" hidden>
+        <span class="analysis-status-icon" id="analysisStatusIcon">✓</span>
+        <div><strong id="analysisStatusTitle">Analiz hazır</strong><span id="analysisStatusText">—</span></div>
+      </div>
+
+      <article class="card plan-ai-card" id="planAiCard" hidden>
+        <div class="card-heading split-heading">
+          <div><span class="section-kicker">Plan AI · NVIDIA</span><h3>Açık resmî kaynakları yapay zekâ ile oku</h3></div>
+          <span class="data-badge" id="planAiBadge">Hazırlanıyor</span>
+        </div>
+        <p class="section-intro" id="planAiIntro">Plan AI, normal taramanın bulduğu açık resmî sayfa ve belgeleri okuyarak eksik imar değerlerini arıyor.</p>
+        <div class="plan-ai-evidence" id="planAiEvidence"></div>
+        <div class="plan-ai-actions"><button class="button button-secondary" id="planAiAskButton" type="button">Plan AI'ye Sor</button></div>
+      </article>
+
+      <div class="result-grid">
+        <article class="card parcel-summary" id="cadastralRecordCard">
+          <div class="record-badge-row"><div class="verified-badge">TKGM açık CBS yanıtı · Bilgi amaçlı</div><div class="rights-warning-badge">İmar hakkı değildir</div></div>
+          <h3 id="parcelAddress">—</h3>
+          <p id="plainExplanation">Parsel bilgileri hazırlanıyor.</p>
+          <div class="cadastral-strip">
+            <div><span>Parsel alanı</span><strong id="metricArea">—</strong></div>
+            <div><span>TKGM kaydındaki taşınmaz niteliği</span><strong id="metricQuality">—</strong></div>
+            <div><span>Pafta</span><strong id="metricMapSheet">—</strong></div>
+            <div><span>Ada / Parsel</span><strong id="metricBlockParcel">—</strong></div>
+          </div>
+        </article>
+
+        <article class="card zoning-overview" id="zoningRightsCard">
+          <span class="section-kicker">İmar planı ve yeni yapı hakkı</span>
+          <h3 id="zoningOverviewTitle">Plan verisi kontrol ediliyor</h3>
+          <p id="zoningOverviewText">Doğrulanmış imar verisi bulunursa yapılaşma hesapları burada gösterilir.</p>
+          <dl class="zoning-mini-list" id="zoningMiniList"></dl>
+        </article>
+      </div>
+
+      <div class="summary-grid" id="summaryGrid">
+        <article class="summary-card card"><span class="summary-icon">▥</span><strong id="summaryFloors">—</strong><small>En fazla kat</small></article>
+        <article class="summary-card card"><span class="summary-icon">⌂</span><strong id="summaryFootprint">—</strong><small>Binanın oturabileceği yaklaşık alan</small></article>
+        <article class="summary-card card"><span class="summary-icon">⌁</span><strong id="summaryConstruction">—</strong><small>Yaklaşık toplam inşaat hakkı</small></article>
+        <article class="summary-card card"><span class="summary-icon">♧</span><strong id="summaryOutside">—</strong><small>Bina dışında kalan yaklaşık alan</small></article>
+      </div>
+
+      <div class="analysis-columns">
+        <article class="card possibility-card" id="possibilityCard">
+          <div class="card-heading"><span class="section-kicker">Kullanım seçenekleri</span><h3 id="possibilityTitle">Kullanım seçenekleri doğrulanıyor</h3></div>
+          <div class="possibility-grid" id="possibilityGrid"></div>
+        </article>
+        <article class="card warning-card">
+          <div class="card-heading"><span class="section-kicker">Önemli noktalar</span><h3>Dikkat etmeniz gerekenler</h3></div>
+          <div class="warning-list" id="warningList"></div>
+        </article>
+      </div>
+
+      <article class="card completion-card" id="zoningCompletionCard" hidden>
+        <div>
+          <span class="section-kicker">Resmî doğrulama yolu</span>
+          <h3>Yapılaşma değerleri bulunamadı; yetkili sorguyu açın</h3>
+          <p>Planlamasyon yalnız açık veya izinli kaynakları otomatik okur. Diğer resmî hizmetler kullanıcı tarafından açılır; bağlantı bulunması TAKS, emsal veya yapı izni doğrulandığı anlamına gelmez. İsterseniz güncel resmî belgeyle analizi tamamlayabilirsiniz.</p>
+        </div>
+        <div class="completion-actions">
+          <a class="button button-secondary" id="primaryOfficialServiceLink" href="https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html" target="_blank" rel="noopener noreferrer">Resmî İmar Sorgusunu Aç ↗</a>
+          <button class="button button-secondary" id="addEvidenceButton" type="button">Son Çare: Resmî Belge Ekle</button>
+          <button class="button button-primary" id="requestAnalysisButton" type="button">Analiz Talebi Gönder</button>
+        </div>
+      </article>
+
+
+      <details class="card official-services-card compact-details" id="officialServicesCard">
+        <summary class="compact-summary"><span><span class="section-kicker">Resmî imar bağlantıları</span><strong>Yetkili ve ulusal resmî yolları göster</strong></span><span class="data-badge" id="officialServicesBadge">Hazırlanıyor</span></summary>
+        <div class="compact-body"><p class="section-intro" id="officialServicesIntro">e-Plan, TUCBS ve ilgili belediyenin resmî imar hizmeti aranıyor.</p>
+        <div class="official-services-grid" id="officialServicesGrid"></div></div>
+      </details>
+
+      <details class="card source-scan-card" id="sourceScanCard" hidden>
+        <summary class="source-scan-summary">
+          <span><span class="section-kicker">Otomatik açık kaynak taraması</span><strong>Kontrol edilen resmî kaynakları göster</strong></span>
+          <span class="data-badge" id="sourceScanBadge">Hazırlanıyor</span>
+        </summary>
+        <p class="section-intro" id="sourceScanIntro">e-Devlet girişi istemeyen resmî kaynaklar sırayla kontrol ediliyor.</p>
+        <div class="source-scan-grid" id="sourceScanGrid"></div>
+        <div class="source-scan-actions"><button class="button button-secondary" id="retrySourceScanButton" type="button" hidden>Kalan Kaynakları Yeniden Tara</button></div>
+      </details>
+
+      <details class="card plan-records-card compact-details" id="planRecordsCard">
+        <summary class="compact-summary"><span><span class="section-kicker">Ada–parsel plan kaydı</span><strong>Plan ve askı kayıtlarını göster</strong></span><span class="data-badge" id="planRecordsBadge">Hazırlanıyor</span></summary>
+        <div class="compact-body"><p class="section-intro" id="planRecordsIntro">Kamuya açık resmî plan ve askı kayıtlarında ada/parsel eşleşmesi aranıyor.</p>
+        <div class="plan-records-grid" id="planRecordsGrid"></div></div>
+      </details>
+
+      <details class="card technical-card" id="technicalDetails">
+        <summary>Teknik bilgileri göster <span>⌄</span></summary>
+        <dl id="technicalList"></dl>
+      </details>
+
+      <article class="card environment-card">
+        <div class="card-heading split-heading">
+          <div><span class="section-kicker">Konum ve çevre</span><h3>Yakınınızda neler var?</h3></div>
+          <span class="data-badge" id="environmentBadge">Hazırlanıyor</span>
+        </div>
+        <p class="section-intro" id="environmentIntro">Parsel merkezinin yakınındaki ulaşım, eğitim, sağlık, park ve günlük ihtiyaç noktaları inceleniyor.</p>
+        <div class="environment-grid" id="environmentGrid"></div>
+      </article>
+
+      <article class="card roadmap-card" id="roadmapCard">
+        <div class="card-heading"><span class="section-kicker" id="roadmapKicker">Genel yol · yapı izni değildir</span><h3 id="roadmapTitle">Yapı düşünülüyorsa önce ne doğrulanmalı?</h3></div>
+        <div class="roadmap" id="roadmap"></div>
+      </article>
+
+      <details class="card claims-card compact-details">
+        <summary class="compact-summary"><span><span class="section-kicker">Kaynak–sonuç ilişkisi</span><strong>Hangi bilgi nereden geldi?</strong></span><span aria-hidden="true">⌄</span></summary>
+        <div class="compact-body"><div class="claim-list" id="claimList"></div></div>
+      </details>
+
+      <details class="card source-card compact-details">
+        <summary class="compact-summary"><span><span class="section-kicker">Kaynaklar</span><strong>Bu sonuç neye dayanıyor?</strong></span><span aria-hidden="true">⌄</span></summary>
+        <div class="compact-body"><div class="source-list" id="sourceList"></div>
+        <div class="static-source-links">
+          <a href="https://parselsorgu.tkgm.gov.tr/" target="_blank" rel="noopener noreferrer">TKGM Parsel Sorgu ↗</a>
+          <a href="https://eplan.csb.gov.tr/" target="_blank" rel="noopener noreferrer">e-Plan ↗</a>
+          <a href="https://www.mevzuat.gov.tr/" target="_blank" rel="noopener noreferrer">Mevzuat Bilgi Sistemi ↗</a>
+        </div></div>
+      </details>
+    </section>
+
+    <section class="section how-section">
+      <span class="section-kicker">Nasıl çalışır?</span>
+      <h2>Karmaşık veriyi sade bir sonuca dönüştürür</h2>
+      <div class="how-grid">
+        <article class="card"><span class="step-number">1</span><h3>Gerçek parseli bulun</h3><p>Kadastro geometrisi bilgi amaçlı alınır; ticari veri kullanımı gerekli kurum yetkilerine tabidir.</p></article>
+        <article class="card"><span class="step-number">2</span><h3>Kaynakları ayırın</h3><p>Plan, plan notu, belediye verisi ve kullanıcı belgesi güven düzeyine göre ayrıştırılır.</p></article>
+        <article class="card"><span class="step-number">3</span><h3>Sade sonucu okuyun</h3><p>Yalnızca doğrulanabilen değerler hesaplanır; eksikler ve kaynaklar açıkça gösterilir.</p></article>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <span>© 2026 PLANLAMASYON · v3.4.0</span>
+      <nav><button data-footer-panel="about">Hakkımızda</button><button data-footer-panel="contact">İletişim</button><button data-footer-panel="privacy">Gizlilik</button><button data-footer-panel="terms">Kullanım Koşulları</button></nav>
+    </footer>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+  <aside class="side-drawer" id="sideDrawer" hidden role="dialog" aria-modal="true" aria-label="Planlamasyon paneli">
+    <div class="drawer-head"><h3 id="drawerTitle">Panel</h3><button id="drawerClose" class="profile-button" type="button" aria-label="Paneli kapat">×</button></div>
+    <div class="drawer-content" id="drawerContent"></div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="/app.js?v=3.4.0"></script>
+</body>
+</html>

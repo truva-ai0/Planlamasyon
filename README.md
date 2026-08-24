@@ -1,9 +1,18 @@
-# Planlamasyon v3.2.8 — Mobil Harita ve Dayanıklı Canlı Servisler
+# Planlamasyon v3.2.9 — Doğru Bağlam ve Mobil Sonuç Deneyimi
 
-## v3.2.8 düzeltmeleri
+## v3.2.9 düzeltmeleri
+
+- İmar değeri doğrulanmayan parsellerde konut, villa, havuz ve benzeri kullanım kartları artık öneri gibi gösterilmez; tek bir güvenli açıklama sunulur.
+- “Mezarlık ve Tarla”, orman, mera, park ve benzeri kadastro niteliklerinde bunun tek başına imar hakkı olmadığı açıkça belirtilir.
+- Yapılaşma doğrulanmadan tam ruhsat yol haritası gösterilmez; önce yetkili idarenin güncel imar durumunun doğrulanması istenir.
+- Tekrarlanan resmî bağlantılar URL ve kaynak kimliğine göre birleştirilir; ikincil kaynaklar açılır-kapanır ayrıntı bölümlerine taşındı.
+- Plan AI, telefon ve “masaüstü site” görünümünde tam genişlikte bir alt panel olarak açılır. CSS ve JavaScript önbellek anahtarları v3.2.9’a yükseltildi.
+- Cloudflare’ın ana sayfayı Identity ayarı gibi HTTP 200 döndürmesi artık hesap sistemini yanlışlıkla etkin göstermez.
+- Hesap eşitleme kapalıyken Çalışmalarım, Favorilerim ve Taleplerim bölümlerinde kayıtların yalnız bu cihazda saklandığı açıkça gösterilir.
+
+## Korunan v3.2.8 iyileştirmeleri
 
 - Mobil haritada varsayılan katman daha dayanıklı OpenStreetMap katmanına alındı; parsel çiziminden sonra harita boyutu ve sınırları yeniden hesaplanır.
-- Mobil Plan AI paneli tam genişlikte, içerik kadar açılan ve uzun içerikte kaydırılabilen alt panele dönüştürüldü.
 - Açık resmî kaynak tarama süresi ve eşzamanlı bağlantı sayısı artırıldı; yarım kalan taramalar daha az görülür.
 - Plan AI bekleme süresi ve NVIDIA 202 durum sorgulama aralığı gerçek servis gecikmelerine göre düzenlendi; cevap uzunluğu hız için sınırlandı.
 - Yakın çevre sorgusu 1,5 km yarıçapta hızlandırıldı ve Overpass yanıt vermediğinde Nominatim yedeği etkinleştirildi.

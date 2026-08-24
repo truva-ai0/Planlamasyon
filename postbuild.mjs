@@ -1432,13 +1432,18 @@ await replaceRequired('netlify/functions/analyze.mjs', [
   ['PLAN_AI_TIMEOUT_MS: 24000,', "PLAN_AI_TIMEOUT_MS: 9000,\n      PLAN_AI_AUTO_ENABLED: 'false',"],
   ['OVERPASS_TOTAL_TIMEOUT_MS: 8000,', 'OVERPASS_TOTAL_TIMEOUT_MS: 7000,'],
   ['OVERPASS_TIMEOUT_MS: 3500,', 'OVERPASS_TIMEOUT_MS: 2800,'],
-  ['        60_000,', '        15_000,'],
-  ['        20_000,', '        10_000,']
+  ['        60_000,', '        12_000,'],
+  ['        20_000,', '        8_000,']
 ]);
 
 await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
   [
-    `  const openSourceScan = await settleWithin(
+    `  const [basePlanContext, publicPlanRecords, providerDiscovery] = await Promise.all([planContextPromise, publicPlanRecordsPromise, providerDiscoveryPromise]);
+  const planContext = mergePlanContext(basePlanContext, publicPlanRecords);
+
+  // Önce açık resmî kaynak sonucu alınır. Böylece belediye portalında POST/form ile elde edilen
+  // parsel sonucu yeniden GET edilmeye çalışılmadan doğrudan Plan AI kanıtına aktarılabilir.
+  const openSourceScan = await settleWithin(
     discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
     18000,
     () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
@@ -1448,11 +1453,26 @@ await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
     26000,
     () => unavailablePlanAi(fastEnv, 'Plan AI süre sınırı içinde yanıt vermedi; diğer resmî kaynak sonuçları gösteriliyor.')
   );`,
-    `  const openSourceScan = await settleWithin(
-    discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
-    10_000,
-    () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
-  );
+    `  const providerDiscovery = await providerDiscoveryPromise;
+  const manualOnlyWithoutConnector = shouldUseManualOnlyStatus(providerDiscovery)
+    && Number(providerDiscovery?.automaticConnectorCount || 0) === 0
+    && !(providerDiscovery?.actions || []).some((item) => item?.automatedQueryAllowed === true || item?.accessMode === 'automatic-adapter');
+  const openSourceScanPromise = manualOnlyWithoutConnector
+    ? Promise.resolve(manualOnlySourceScan(providerDiscovery))
+    : settleWithin(
+      discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
+      7_000,
+      () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
+    );
+  const [basePlanContext, publicPlanRecords, openSourceScan] = await Promise.all([
+    planContextPromise,
+    publicPlanRecordsPromise,
+    openSourceScanPromise
+  ]);
+  const planContext = mergePlanContext(basePlanContext, publicPlanRecords);
+
+  // Sağlayıcı keşfi tamamlanır tamamlanmaz izinli açık kaynak taraması, plan metaverisiyle
+  // paralel yürür. Manuel portallara hiçbir otomatik istek yapılmaz.
   const planAiAutoEnabled = String(fastEnv.PLAN_AI_AUTO_ENABLED ?? 'false').toLowerCase() === 'true';
   const planAiResult = planAiAutoEnabled
     ? await settleWithin(
@@ -1466,6 +1486,30 @@ await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
     `  configuration.planAiEnabled = Boolean(planAi?.enabled);`,
     `  configuration.planAiAutoEnabled = planAiAutoEnabled;
   configuration.planAiEnabled = Boolean(planAi?.enabled);`
+  ],
+  [
+    `function unavailablePlanAi(env, message) {`,
+    `function manualOnlySourceScan(providerDiscovery = {}) {
+  const services = Array.isArray(providerDiscovery?.municipalServices)
+    ? providerDiscovery.municipalServices.filter((item) => item?.accessMode === 'manual-only' || item?.status === 'manual-only')
+    : [];
+  const attempts = services.map((item) => ({
+    id: item.id,
+    title: item.title,
+    provider: item.provider,
+    url: item.url,
+    status: 'manual-only',
+    message: item.note || 'Bu resmî portal yalnız kullanıcı tarafından açılır; otomatik sorgu yapılmadı.'
+  }));
+  const message = providerDiscovery?.message || 'Resmî imar portalı manuel kullanım gerektiriyor; otomatik kaynak taraması yapılmadı.';
+  return {
+    status: 'manual-only', exhausted: true, budgetLimited: false,
+    totalCandidateCount: attempts.length, attemptedCount: attempts.length, reachableCount: 0,
+    foundRecordCount: 0, foundFieldCount: 0, records: [], sources: [], attempts, diagnostics: [], message
+  };
+}
+
+function unavailablePlanAi(env, message) {`
   ],
   ["configuration.boundedAnalysisVersion = '3.3.0';", "configuration.boundedAnalysisVersion = '3.4.0';"]
 ]);

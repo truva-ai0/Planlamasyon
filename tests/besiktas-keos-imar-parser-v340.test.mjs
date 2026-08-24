@@ -7,6 +7,7 @@ import {
   isBesiktasKeosOfficialResultUrl,
   parseBesiktasKeosImarHtml
 } from '../netlify/functions/lib/besiktas-keos-imar-parser.mjs';
+import { resolveZoning } from '../netlify/functions/lib/zoning-client.mjs';
 
 const fixtureUrl = new URL('./fixtures/besiktas-imar-816-35.html', import.meta.url);
 const officialUrl = 'https://keos.besiktas.bel.tr/imardurumu/imar.aspx?parselid=2867';
@@ -184,4 +185,42 @@ test('kullanıcı kaynağı ve açık onay olmadan HTML ayrıştırılmaz', asyn
     assert.equal(parsed.fields, null);
     assert.equal(parsed.record, null);
   }
+});
+
+test('Beşiktaş manual-only akışı korumalı portala istek atmadan hızlı yönlendirme döndürür', async (t) => {
+  const zoningSource = await readFile(new URL('../netlify/functions/lib/zoning-client.mjs', import.meta.url), 'utf8');
+  if (!zoningSource.includes('manualOnlySourceScan')) {
+    t.skip('Bu sözleşme v3.4 postbuild yükseltmesinden sonra doğrulanır.');
+    return;
+  }
+  let networkCalls = 0;
+  const parcel = {
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [[[28.99917, 41.04842], [28.99943, 41.04822], [28.99949, 41.04831], [28.99917, 41.04842]]] },
+    properties: { province: 'İstanbul', district: 'Beşiktaş', neighbourhood: 'Muradiye', neighbourhoodId: 147951, block: '816', parcel: '35', area: 338 }
+  };
+  const result = await resolveZoning({
+    parcel,
+    query: { province: 'İstanbul', district: 'Beşiktaş', neighbourhood: 'Muradiye', neighbourhoodId: 147951, block: '816', parcel: '35' },
+    env: {
+      PUBLIC_PLAN_COVERAGE_ENABLED: 'false',
+      PUBLIC_PLAN_RECORD_DISCOVERY_ENABLED: 'false',
+      MUNICIPALITY_EDEVLET_DISCOVERY_ENABLED: 'false',
+      MUNICIPALITY_PROVIDER_CACHE_DISABLED: 'true',
+      OPEN_OFFICIAL_SOURCE_CACHE_DISABLED: 'true',
+      PLAN_AI_AUTO_ENABLED: 'false'
+    },
+    fetchImpl: async () => {
+      networkCalls += 1;
+      throw new Error('Manual-only akışında ağ çağrısı yapılmamalı.');
+    }
+  });
+
+  assert.equal(networkCalls, 0);
+  assert.equal(result.status, 'manual-only');
+  assert.equal(result.providerDiscovery.municipalService.id, 'istanbul-besiktas-imar-durumu');
+  assert.equal(result.sourceScan.status, 'manual-only');
+  assert.equal(result.sourceScan.attemptedCount, 1);
+  assert.equal(result.sourceScan.attempts[0].status, 'manual-only');
+  assert.match(result.planAi.message, /otomatik beklenmedi/i);
 });

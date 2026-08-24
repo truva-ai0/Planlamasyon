@@ -32,9 +32,10 @@ test('v3.4.0 hızlı ilk faz otomatik Plan AI beklemez ve süreyi sınırlar', a
   const app = await readFile('dist/app.js', 'utf8');
   const wrangler = await readFile('wrangler.toml', 'utf8');
   assert.match(analyze, /OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS: 9000/);
-  assert.match(analyze, /15_000/);
+  assert.match(analyze, /12_000/);
   assert.match(zoning, /PLAN_AI_AUTO_ENABLED/);
-  assert.match(zoning, /10_000/);
+  assert.match(zoning, /manualOnlySourceScan/);
+  assert.match(zoning, /7_000/);
   assert.match(app, /void analyzeCurrentParcel\(\)/);
   assert.match(app, /timeoutMs: 18_000/);
   assert.match(wrangler, /OPEN_OFFICIAL_SOURCE_TOTAL_BUDGET_MS = "9000"/);

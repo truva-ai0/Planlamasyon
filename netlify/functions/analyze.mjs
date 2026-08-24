@@ -41,7 +41,7 @@ export async function handler(event, context = {}) {
     const [zoningResult, environmentResult] = await Promise.allSettled([
       settleWithin(
         resolveZoning({ parcel, query, evidence, env: boundedEnv }),
-        15_000,
+        12_000,
         () => ({
           status: 'unavailable', conflict: false, fields: {}, sources: [],
           sourceScan: { status: 'incomplete', exhausted: false, budgetLimited: true, attemptedCount: 0, reachableCount: 0, foundRecordCount: 0, attempts: [], sources: [], message: 'İmar kaynakları süre sınırı içinde tamamlanamadı.' },
@@ -55,7 +55,7 @@ export async function handler(event, context = {}) {
       ),
       settleWithin(
         analyzeEnvironment({ geometry: parcel.geometry, env: boundedEnv }),
-        10_000,
+        8_000,
         () => ({ status: 'unavailable', categories: [], items: [], message: 'Yakın çevre servisi süre içinde yanıt vermedi; parsel ve imar sonucu bundan etkilenmez.' })
       )
     ]);

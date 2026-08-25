@@ -1,6 +1,6 @@
 import { normalizeZoningFields } from './analysis-core.mjs';
 
-export const PLAN_AI_VERSION = '3.5.0';
+export const PLAN_AI_VERSION = '3.6.0';
 export const PLAN_AI_MODEL = 'stepfun-ai/step-3.7-flash';
 export const PLAN_AI_ENDPOINT = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const PLAN_AI_STATUS_ENDPOINT = 'https://integrate.api.nvidia.com/v1/status';
@@ -343,7 +343,7 @@ async function fetchEvidence(candidate, { fetchImpl, timeoutMs, expected }) {
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com; Plan-AI-public-source-reader)'
+        'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com; Plan-AI-public-source-reader)'
       },
       signal: controller.signal
     });
@@ -395,7 +395,7 @@ async function fetchLinkedDocument(url, { fetchImpl, timeoutMs, expected, parent
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(url, { redirect: 'follow', headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)' }, signal: controller.signal });
+    const response = await fetchImpl(url, { redirect: 'follow', headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)' }, signal: controller.signal });
     if (!response.ok) return null;
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > 5 * 1024 * 1024) return null;

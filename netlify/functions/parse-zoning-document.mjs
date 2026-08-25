@@ -23,7 +23,9 @@ export async function handler(event) {
       authority: clean(body.authority, 240),
       sourceUrl: safeHttps(body.sourceUrl),
       fileName: clean(body.fileName, 260),
-      mimeType: clean(body.mimeType, 120)
+      mimeType: clean(body.mimeType, 120),
+      documentDate: clean(body.documentDate, 80),
+      retrievedAt: clean(body.retrievedAt, 80)
     };
 
     if (mode === 'url') {
@@ -52,6 +54,8 @@ export async function handler(event) {
           mimeType: metadata.mimeType || null,
           pageCount: metadata.pageCount || null,
           parserVersion: ZONING_DOCUMENT_PARSER_VERSION,
+          documentDate: parsed.evidence?.documentDate || metadata.documentDate || null,
+          retrievedAt: parsed.evidence?.retrievedAt || metadata.retrievedAt || null,
           characterCount: text.length
         }
       }
@@ -119,7 +123,13 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
     label: item.label || key,
     confidence: item.confidence || 'high',
     excerpt: `${item.label || key}: ${item.rawValue ?? item.value ?? ''}`,
-    method: item.method || 'besiktas-keos-result-row'
+    method: item.method || 'besiktas-keos-result-row',
+    sourceTitle: parsed.source?.title || metadata.sourceTitle || 'Beşiktaş Belediyesi İmar Durumu',
+    sourceUrl: parsed.source?.url || metadata.sourceUrl || null,
+    documentDate: fields.planDate || metadata.documentDate || null,
+    retrievedAt: metadata.retrievedAt || new Date().toISOString(),
+    parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
+    parcelMatchStatus: 'exact'
   }]));
   const core = ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
   const populated = core.filter((key) => fields[key] != null);
@@ -158,6 +168,8 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
       rearSetback: fields.rearSetback,
       parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
       documentType: 'zoning-status-document',
+      documentDate: fields.planDate || generic.evidence?.documentDate || metadata.documentDate || null,
+      retrievedAt: metadata.retrievedAt || generic.evidence?.retrievedAt || null,
       extractionConfidence: parsed.record.extractionConfidence || 'high',
       parcelMatchStatus: 'exact',
       detectedParcels: [parsed.detectedParcel],
@@ -184,7 +196,7 @@ async function fetchOfficialDocument(inputUrl) {
       redirect: 'follow',
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.3',
-        'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
+        'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
       },
       signal: controller.signal
     });
@@ -216,6 +228,8 @@ async function fetchOfficialDocument(inputUrl) {
         fileName,
         mimeType: mimeType || inferMime(fileName),
         pageCount,
+        documentDate: response.headers.get('last-modified') || null,
+        retrievedAt: new Date().toISOString(),
         sourceTitle: fileName ? fileName.replace(/\.[^.]+$/, '') : null
       }
     };

@@ -1,7 +1,7 @@
 import { geometryCenter } from './geo.mjs';
 import { normalizeZoningFields } from './analysis-core.mjs';
 
-export const OPEN_OFFICIAL_SOURCE_VERSION = '3.5.0';
+export const OPEN_OFFICIAL_SOURCE_VERSION = '3.6.0';
 
 const CACHE = globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ = CACHE;
@@ -137,7 +137,8 @@ export async function discoverOpenOfficialZoning({
           foundFields: [],
           accessMode: candidate.accessMode || null,
           automatedQueryAllowed: candidate.automatedQueryAllowed === true,
-          termsUrl: candidate.termsUrl || null
+          termsUrl: candidate.termsUrl || null,
+          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
         });
         continue;
       }
@@ -156,7 +157,8 @@ export async function discoverOpenOfficialZoning({
           foundFields: [],
           accessMode: candidate.accessMode || null,
           automatedQueryAllowed: candidate.automatedQueryAllowed === true,
-          termsUrl: candidate.termsUrl || null
+          termsUrl: candidate.termsUrl || null,
+          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
         });
         diagnostics.push({ connector: candidate.id, message });
         continue;
@@ -175,7 +177,8 @@ export async function discoverOpenOfficialZoning({
         foundFields: fieldNames(result.record?.fields),
         accessMode: candidate.accessMode || null,
         automatedQueryAllowed: candidate.automatedQueryAllowed === true,
-        termsUrl: candidate.termsUrl || null
+        termsUrl: candidate.termsUrl || null,
+        sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
       });
       if (result.source) sources.push(result.source);
       if (Array.isArray(result.aiEvidence)) aiEvidence.push(...result.aiEvidence);
@@ -246,16 +249,18 @@ export async function discoverOpenOfficialZoning({
 
 function buildCandidateQueue({ providerDiscovery, env, location }) {
   const candidates = [...NATIONAL_CANDIDATES];
-  const configured = parseConfiguredSources(env.OPEN_OFFICIAL_ZONING_SOURCES_JSON, location);
+  const configured = parseConfiguredSources(env.OPEN_OFFICIAL_ZONING_SOURCES_JSON, location, env);
   candidates.push(...configured);
 
   const actions = Array.isArray(providerDiscovery?.actions) ? providerDiscovery.actions : [];
   for (const action of actions) {
-    const url = safePublicUrl(action?.url);
+    const url = safeAutomaticSourceUrl(action?.url, env.OPEN_OFFICIAL_SOURCE_ALLOWED_HOSTS);
     if (!url) continue;
     const accessMode = String(action?.accessMode || '');
     const kind = String(action?.kind || '');
-    const isLogin = accessMode === 'official-login-service' || /turkiye\.gov\.tr/i.test(url);
+    const isLogin = ['official-login-service', 'official-search'].includes(accessMode)
+      || action?.sourceClass === 'authenticated-official'
+      || /turkiye\.gov\.tr/i.test(url);
     if (isLogin) continue;
     if (!['municipality-geodata', 'national-geodata', 'national-portal', 'official-portal', 'municipality-portal', 'configured-adapter'].includes(kind) && !action?.machineReadableCandidate) continue;
     candidates.push({
@@ -273,7 +278,10 @@ function buildCandidateQueue({ providerDiscovery, env, location }) {
       configured: action.configured === true || kind === 'configured-adapter',
       authorized: action.authorized === true || action.automatedQueryAllowed === true,
       termsUrl: safePublicUrl(action.termsUrl),
-      readOnlyResult: action.readOnlyResult === true || accessMode === 'read-only-result'
+      readOnlyResult: action.readOnlyResult === true || accessMode === 'read-only-result',
+      sourceClass: clean(action.sourceClass, 80) || classifyCandidateSource(action),
+      verifiedAt: clean(action.verifiedAt, 40),
+      documentDate: clean(action.documentDate, 40)
     });
   }
 
@@ -281,13 +289,13 @@ function buildCandidateQueue({ providerDiscovery, env, location }) {
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
 }
 
-function parseConfiguredSources(raw, location) {
+function parseConfiguredSources(raw, location, env = {}) {
   const parsed = parseJson(raw, []);
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.sources) ? parsed.sources : [];
   return list
     .filter((item) => item && (item.url || item.endpoint) && matchesLocation(item, location))
     .map((item, index) => {
-      const endpoint = safePublicUrl(item.endpoint || item.url);
+      const endpoint = safeAutomaticSourceUrl(item.endpoint || item.url, env.OPEN_OFFICIAL_SOURCE_ALLOWED_HOSTS);
       if (!endpoint) return null;
       return {
         id: cleanId(item.id || `configured-open-${index + 1}`),
@@ -305,14 +313,19 @@ function parseConfiguredSources(raw, location) {
         configured: true,
         authorized: item.authorized === true || item.automatedQueryAllowed === true,
         termsUrl: safePublicUrl(item.termsUrl),
-        readOnlyResult: item.readOnlyResult === true || item.accessMode === 'read-only-result'
+        readOnlyResult: item.readOnlyResult === true || item.accessMode === 'read-only-result',
+        sourceClass: item.authorized === true && item.automatedQueryAllowed === true ? 'authorized-adapter' : 'open-machine-readable',
+        verifiedAt: clean(item.verifiedAt, 40),
+        documentDate: clean(item.documentDate, 40)
       };
     })
     .filter(Boolean);
 }
 
 async function queryCandidate(candidate, context) {
-  if (candidate.accessMode === 'manual-only' || candidate.automatedQueryAllowed === false && candidate.status === 'manual-only') {
+  if (['manual-only', 'official-login-service', 'official-search', 'configured-not-authorized'].includes(candidate.accessMode)
+      || candidate.sourceClass === 'authenticated-official'
+      || candidate.automatedQueryAllowed === false && candidate.status === 'manual-only') {
     return manualOnlyResult(candidate);
   }
   switch (candidate.kind) {
@@ -565,7 +578,15 @@ function parsePortalResultHtml({ candidate, url, html, expected, retrievalMode }
       ? `Açık belediye imar uygulamasında ${expected.block} ada ${expected.parcel} parsel sonucu ${readOnly ? 'salt-okunur sonuç sayfasından' : 'yetkili sorgudan'} okundu.`
       : `Açık belediye imar uygulamasında ${expected.block} ada ${expected.parcel} parsel sonucu bulundu; yapılaşma metni Plan AI incelemesine aktarıldı.`,
     retrievedAt: new Date().toISOString(), scanVersion: OPEN_OFFICIAL_SOURCE_VERSION,
-    retrievalMode
+    retrievalMode,
+    sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+    accessMode: candidate.accessMode || 'read-only-result',
+    automationPolicy: readOnly ? 'read-only' : 'authorized-automatic',
+    dataClaim: 'read-and-parcel-matched',
+    documentDate: candidate.documentDate || fields.planDate || null,
+    verifiedAt: candidate.verifiedAt || null,
+    extractionConfidence: 'medium',
+    fieldEvidence: buildOpenFieldEvidence(fields, plainText, retrievalMode)
   };
   const evidence = makePortalAiEvidence(candidate, url, plainText, expected);
   if (actionable || any) {
@@ -737,7 +758,7 @@ function portalHeaders(referer, cookieHeader = '') {
   return {
     Accept: 'text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.2',
     'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-    'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)',
+    'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)',
     Referer: referer,
     Origin: url.origin,
     ...(cookieHeader ? { Cookie: cookieHeader } : {})
@@ -770,7 +791,15 @@ function buildResultFromAttributes(candidate, attributeRows, { note, detail } = 
     trust: actionable ? 'verified' : 'public-information',
     note: [note, detail ? `Katman: ${detail}.` : null, actionable ? 'Açık resmî veri kaynağından otomatik okundu.' : 'Yalnızca plan/metaveri bilgisi bulundu; yapılaşma hesabı için yeterli değildir.'].filter(Boolean).join(' '),
     retrievedAt: new Date().toISOString(),
-    scanVersion: OPEN_OFFICIAL_SOURCE_VERSION
+    scanVersion: OPEN_OFFICIAL_SOURCE_VERSION,
+    sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+    accessMode: candidate.accessMode || (candidate.authorized ? 'automatic-adapter' : 'open-data'),
+    automationPolicy: candidate.authorized ? 'authorized-automatic' : 'read-only',
+    dataClaim: 'read-and-location-matched',
+    documentDate: candidate.documentDate || fields.planDate || null,
+    verifiedAt: candidate.verifiedAt || null,
+    extractionConfidence: 'high',
+    fieldEvidence: buildStructuredFieldEvidence(fields, candidate.kind)
   };
   const record = any ? { fields, source, message: actionable ? 'Açık resmî kaynakta yapılaşma koşulu bulundu.' : 'Açık resmî kaynakta plan metaverisi bulundu.' } : null;
   return {
@@ -835,7 +864,7 @@ export function extractOfficialServiceUrls(html, baseUrl) {
       const value = match[1] || match[0];
       try {
         const url = new URL(value, baseUrl);
-        if (!isAllowedPublicUrl(url)) continue;
+        if (!isAllowedPublicUrl(url) || !isOfficialAutomationHost(url.hostname)) continue;
         const kind = inferKind(url.toString(), {});
         if (!['wms', 'wfs', 'arcgis', 'json'].includes(kind)) continue;
         raw.add(url.toString());
@@ -1105,7 +1134,12 @@ function result(status, message, candidate) {
       kind: candidate.kind === 'portal' ? 'official-portal' : 'official-open-source',
       trust: 'public-information',
       note: message,
-      scanVersion: OPEN_OFFICIAL_SOURCE_VERSION
+      scanVersion: OPEN_OFFICIAL_SOURCE_VERSION,
+      sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+      accessMode: candidate.accessMode || null,
+      automationPolicy: 'routing-only',
+      dataClaim: 'no-value-read',
+      verifiedAt: candidate.verifiedAt || null
     },
     discovered: [],
     aiEvidence: []
@@ -1113,7 +1147,10 @@ function result(status, message, candidate) {
 }
 
 function manualOnlyResult(candidate) {
-  const message = 'Bu resmî portal kullanım koşulları gereği yalnızca kullanıcı tarafından elle sorgulanır; otomatik form işlemi yapılmadı.';
+  const authenticated = candidate.sourceClass === 'authenticated-official' || ['official-login-service', 'official-search'].includes(candidate.accessMode);
+  const message = authenticated
+    ? 'Bu resmî hizmet kullanıcı oturumu veya portal işlemi gerektirir; Planlamasyon giriş yapmadı ve sonucu otomatik okunmuş saymadı.'
+    : 'Bu resmî portal kullanım koşulları gereği yalnızca kullanıcı tarafından elle sorgulanır; otomatik form işlemi yapılmadı.';
   return {
     status: 'manual-only',
     message,
@@ -1126,10 +1163,15 @@ function manualOnlyResult(candidate) {
       kind: 'official-portal',
       trust: 'manual-verification-required',
       note: message,
-      accessMode: 'manual-only',
+      accessMode: authenticated ? candidate.accessMode : 'manual-only',
       automatedQueryAllowed: false,
       termsUrl: candidate.termsUrl || null,
-      scanVersion: OPEN_OFFICIAL_SOURCE_VERSION
+      scanVersion: OPEN_OFFICIAL_SOURCE_VERSION,
+      sourceClass: authenticated ? 'authenticated-official' : 'public-manual',
+      automationPolicy: 'manual-only',
+      dataClaim: 'not-read',
+      userActionRequired: true,
+      verifiedAt: candidate.verifiedAt || null
     },
     discovered: [],
     aiEvidence: []
@@ -1288,16 +1330,29 @@ async function fetchJson(url, timeoutMs, fetchImpl, title) {
   try { return JSON.parse(text); } catch { throw new Error(`${title || 'Resmî veri servisi'} geçerli JSON döndürmedi.`); }
 }
 async function fetchWithTimeout(url, options, timeoutMs, fetchImpl) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try { return await fetchImpl(url, { ...options, signal: controller.signal }); }
-  catch (error) {
-    if (error?.name === 'AbortError') throw new Error('Resmî kaynak zaman aşımına uğradı.');
-    throw error;
-  } finally { clearTimeout(timer); }
+  const method = String(options?.method || 'GET').toUpperCase();
+  const retryCount = method === 'GET' || method === 'HEAD' ? 1 : 0;
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    try {
+      const response = await fetchImpl(url, { ...options, signal: controller.signal });
+      if (attempt < retryCount && (response.status === 429 || response.status >= 500) && deadline - Date.now() > 50) continue;
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (error?.name === 'AbortError' || attempt >= retryCount || deadline - Date.now() <= 50) break;
+    } finally { clearTimeout(timer); }
+  }
+  if (lastError?.name === 'AbortError' || Date.now() >= deadline) throw new Error('Resmî kaynak zaman aşımına uğradı.');
+  throw lastError || new Error('Resmî kaynağa güvenli bağlantı kurulamadı.');
 }
 function standardHeaders(accept) {
-  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)' };
+  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)' };
 }
 function withQuery(value, params) {
   const url = new URL(allowedPublicUrl(value));
@@ -1310,14 +1365,78 @@ function allowedPublicUrl(value) {
   return url.toString();
 }
 function safePublicUrl(value) { try { return allowedPublicUrl(value); } catch { return null; } }
+function safeAutomaticSourceUrl(value, rawAllowlist) {
+  try {
+    const url = new URL(allowedPublicUrl(value));
+    return isOfficialAutomationHost(url.hostname) || hostMatchesAllowlist(url.hostname, rawAllowlist) ? url.toString() : null;
+  } catch { return null; }
+}
 function isAllowedPublicUrl(url) {
-  if (url.protocol !== 'https:') return false;
-  const host = String(url.hostname).toLowerCase();
-  if (host === 'localhost' || host.endsWith('.local')) return false;
-  if (/^(127\.|10\.|192\.168\.|169\.254\.)/.test(host)) return false;
-  const match = host.match(/^172\.(\d+)\./);
-  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return false;
-  return true;
+  if (url.protocol !== 'https:' || url.username || url.password || !['', '443'].includes(url.port)) return false;
+  return !blockedNetworkHost(url.hostname);
+}
+function blockedNetworkHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  if (['::', '::1', '0.0.0.0', 'metadata.google.internal', 'instance-data'].includes(host)) return true;
+  if (/^(?:fc|fd)[0-9a-f]{2}:|^fe[89ab][0-9a-f]:|^ff[0-9a-f]{2}:/i.test(host)) return true;
+  if (host.startsWith('::ffff:')) return true;
+  const parts = host.split('.');
+  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
+    const [a, b] = parts.map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && [18, 19].includes(b));
+  }
+  return false;
+}
+function isOfficialAutomationHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  return host === 'gov.tr' || host === 'bel.tr' || host.endsWith('.gov.tr') || host.endsWith('.bel.tr');
+}
+function hostMatchesAllowlist(hostname, rawAllowlist) {
+  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  const allowed = String(rawAllowlist || '').split(/[\s,;]+/).map((item) => item.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean);
+  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+function classifyCandidateSource(candidate = {}) {
+  if (candidate.sourceClass) return candidate.sourceClass;
+  if (['official-login-service', 'official-search'].includes(candidate.accessMode)) return 'authenticated-official';
+  if (candidate.accessMode === 'manual-only' || candidate.accessMode === 'configured-not-authorized') return 'public-manual';
+  if (candidate.authorized === true && candidate.automatedQueryAllowed === true) return 'authorized-adapter';
+  return 'open-machine-readable';
+}
+function buildStructuredFieldEvidence(fields = {}, kind = 'open-data') {
+  const result = {};
+  for (const [field, value] of Object.entries(fields)) {
+    if (value == null || value === '' || typeof value === 'object') continue;
+    result[field] = { confidence: 'high', method: `structured-${kind || 'open-data'}`, excerpt: clean(`${field}: ${value}`, 240) };
+  }
+  return result;
+}
+function buildOpenFieldEvidence(fields = {}, sourceText = '', retrievalMode = 'read-only-get') {
+  const aliases = {
+    landUse: /plan\s*fonksiyon|kullanım\s*kararı|arazi\s*kullanımı/i,
+    taks: /\bTAKS\b/i, emsal: /\b(?:emsal|KAKS)\b/i,
+    floors: /kat\s*(?:adedi|sayısı|sayisi)|Yençok|Yencok/i,
+    hmax: /Hmax|Yençok|Yencok|yükseklik/i,
+    buildingOrder: /yapı\s*nizam|yapi\s*nizam|inşaat\s*nizam/i,
+    frontSetback: /ön\s*bahçe|on\s*bahce/i,
+    sideSetback: /yan\s*bahçe|yan\s*bahce/i,
+    rearSetback: /arka\s*bahçe|arka\s*bahce/i,
+    planName: /plan\s*adı|plan\s*adi/i,
+    planScale: /plan\s*ölçeği|ölçek|olcek/i,
+    planDate: /plan\s*tarihi|onay\s*tarihi/i,
+    authority: /yetkili\s*idare|kurum\s*adı|belediye/i
+  };
+  const lines = String(sourceText || '').split(/\n|\|/).map((line) => clean(line, 420)).filter(Boolean);
+  const result = {};
+  for (const [field, value] of Object.entries(fields)) {
+    if (value == null || value === '' || typeof value === 'object') continue;
+    const line = aliases[field] ? lines.find((item) => aliases[field].test(item)) : null;
+    result[field] = { confidence: 'medium', method: `open-portal-${retrievalMode}`, excerpt: line || clean(`${field}: ${value}`, 240) };
+  }
+  return result;
 }
 function classifyError(error) {
   const status = Number(error?.status);
@@ -1339,7 +1458,12 @@ function normalizeKey(value) { return String(value || '').toLocaleLowerCase('tr-
 function normalizeSearchText(value) { return String(value || '').toLocaleLowerCase('tr-TR').replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u').normalize('NFKD').replace(/[\u0300-\u036f]/g, ''); }
 function cleanId(value) { return normalizeKey(value).slice(0, 120) || `source-${Math.random().toString(36).slice(2, 10)}`; }
 function clean(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }
-function safeMessage(error) { return clean(error?.message || error, 500) || 'Bilinmeyen bağlantı hatası'; }
+function safeMessage(error) {
+  const raw = String(error?.message || error || '')
+    .replace(/https?:\/\/[^\s)]+/gi, '[resmî kaynak]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [gizlendi]');
+  return clean(raw, 500) || 'Resmî kaynağa güvenli bağlantı kurulamadı.';
+}
 function parseJson(value, fallback) { if (!value) return fallback; try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return fallback; } }
 function clampInt(value, min, max, fallback) { const number = Number(value); return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.trunc(number))) : fallback; }
 function trimCache() { while (CACHE.size > 500) CACHE.delete(CACHE.keys().next().value); }

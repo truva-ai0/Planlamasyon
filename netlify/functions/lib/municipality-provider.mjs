@@ -56,7 +56,7 @@ const OFFICIAL_PORTALS = {
 
 export async function discoverMunicipalityProvider({ parcel, query, env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const location = resolveLocation(parcel, query);
-  const configuredConnectors = matchingConnectors(env.MUNICIPALITY_CONNECTORS_JSON, location);
+  const configuredConnectors = matchingConnectors(env.MUNICIPALITY_CONNECTORS_JSON, location, env);
   const environmentRegistry = parseRegistry(env.MUNICIPALITY_OFFICIAL_SERVICES_JSON)
     .filter((record) => matchesLocation(record, location))
     .map((record, index) => normalizeRegistryService(record, location, `environment-${index + 1}`))
@@ -64,7 +64,7 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
   const embeddedRecords = matchEmbeddedCatalog(location);
   const embeddedServices = embeddedRecords.map(normalizeCatalogService).filter(Boolean);
   const publicPortalHints = PUBLIC_MUNICIPAL_PORTAL_HINTS.filter((record) => matchesLocation(record, location)).map((record) => normalizeRegistryService(record, location, record.id)).filter(Boolean);
-  const municipalServices = dedupeServices([...environmentRegistry, ...publicPortalHints, ...embeddedServices]);
+  const municipalServices = dedupeServices([...environmentRegistry, ...publicPortalHints, ...embeddedServices]).map(withAccessPolicy);
   const cacheKey = [
     location.provinceKey,
     location.districtKey,
@@ -83,14 +83,15 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
   if (!municipalServices.length && discoveryEnabled && location.district && typeof fetchImpl === 'function') {
     try {
       const discovered = await discoverEDevletService(location, env, fetchImpl);
-      if (discovered) municipalServices.push(discovered);
+      if (discovered) municipalServices.push(withAccessPolicy(discovered));
     } catch (error) {
       diagnostics.push({ connector: 'e-devlet-service-directory', message: clean(error?.message || error, 400) });
     }
   }
-  if (!municipalServices.length && location.district) municipalServices.push(fallbackSearchService(location));
+  if (!municipalServices.length && location.district) municipalServices.push(withAccessPolicy(fallbackSearchService(location)));
 
-  const automaticConnectorCount = configuredConnectors.length;
+  const automaticConnectors = configuredConnectors.filter((item) => item.authorized === true && item.automatedQueryAllowed === true);
+  const automaticConnectorCount = automaticConnectors.length;
   const authorityLabel = location.district
     ? `${location.district} Belediyesi / yetkili imar idaresi`
     : location.province
@@ -120,22 +121,25 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
       authorized: service.authorized === true
     })),
     ...configuredConnectors.map((connector) => ({
+      ...accessPolicyFor(connector),
       id: `configured-${connector.id}`,
       title: connector.title || `${location.district || location.province || 'Belediye'} imar veri bağlantısı`,
       provider: connector.provider || connector.authority || authorityLabel,
       url: safeHttpsUrl(connector.publicUrl || connector.sourceUrl || connector.url || null),
       kind: 'configured-adapter',
-      status: 'configured',
-      accessMode: 'automatic-adapter',
-      note: 'Planlamasyon backend’ine yapılandırılmış otomatik imar veri adaptörü.',
+      status: connector.authorized === true && connector.automatedQueryAllowed === true ? 'configured' : 'authorization-required',
+      accessMode: connector.authorized === true && connector.automatedQueryAllowed === true ? 'automatic-adapter' : 'configured-not-authorized',
+      note: connector.authorized === true && connector.automatedQueryAllowed === true
+        ? 'Planlamasyon backend’ine açıkça yetkilendirilerek yapılandırılmış otomatik imar veri adaptörü.'
+        : 'Bağlantı yapılandırılmıştır ancak otomatik veri okuma yetkisi açıkça verilmediği için yalnız kaynak kaydı olarak gösterilir.',
       termsUrl: safeHttpsUrl(connector.termsUrl),
-      machineReadableCandidate: true,
+      machineReadableCandidate: connector.authorized === true && connector.automatedQueryAllowed === true,
       configured: true,
       authorized: connector.authorized === true || connector.automatedQueryAllowed === true,
       automatedQueryAllowed: connector.automatedQueryAllowed === true
     }))
   ];
-  const finalActions = dedupeActions(actions);
+  const finalActions = dedupeActions(actions).map(withAccessPolicy);
   const exactCatalogMatches = embeddedRecords.filter((record) => record.scope === 'district').length;
   const provinceCatalogMatches = embeddedRecords.filter((record) => record.scope === 'province').length;
 
@@ -159,7 +163,9 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
     municipalService: municipalServices[0] || null,
     municipalServices,
     automaticConnectorCount,
-    connectorIds: configuredConnectors.map((item) => item.id),
+    connectorIds: automaticConnectors.map((item) => item.id),
+    configuredConnectorCount: configuredConnectors.length,
+    authorizationRequiredConnectorCount: configuredConnectors.length - automaticConnectorCount,
     actions: finalActions,
     sources: finalActions.map(actionToSource),
     diagnostics,
@@ -261,19 +267,16 @@ function locationRoutingActions(location) {
 async function discoverEDevletService(location, env, fetchImpl) {
   const searchUrl = buildEDevletSearchUrl(location);
   const timeoutMs = clampInt(env.MUNICIPALITY_EDEVLET_DISCOVERY_TIMEOUT_MS, 900, 10000, 2200);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(searchUrl, {
+    const response = await fetchOfficialDirectory(searchUrl, {
       method: 'GET',
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.5.0 (https://planlamasyon.truva-ai.com)',
+        'User-Agent': 'Planlamasyon/3.6.0 (https://planlamasyon.truva-ai.com)',
         Referer: 'https://www.turkiye.gov.tr/'
-      },
-      signal: controller.signal
-    });
+      }
+    }, timeoutMs, fetchImpl, clampInt(env.MUNICIPALITY_SOURCE_RETRY_COUNT, 0, 1, 1));
     if (!response.ok) throw new Error(`e-Devlet hizmet dizini ${response.status} yanıtı verdi.`);
     const html = await response.text();
     const match = parseEDevletServiceHtml(html, location);
@@ -290,10 +293,8 @@ async function discoverEDevletService(location, env, fetchImpl) {
       authentication: 'Hizmete göre'
     };
   } catch (error) {
-    if (error?.name === 'AbortError') throw new Error('e-Devlet belediye hizmeti araması zaman aşımına uğradı.');
+    if (error?.name === 'AbortError' || /zaman aşım/i.test(error?.message || '')) throw new Error('e-Devlet belediye hizmeti araması zaman aşımına uğradı.');
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -424,15 +425,17 @@ function parseRegistry(raw) {
   return [];
 }
 
-function matchingConnectors(raw, location) {
+function matchingConnectors(raw, location, env = {}) {
   const parsed = parseJson(raw, []);
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.connectors) ? parsed.connectors : [];
   return list.filter((item) => {
     const url = safeHttpsUrl(item?.publicUrl || item?.sourceUrl || item?.url);
-    return Boolean(url && matchesLocation(item, location));
+    return Boolean(url && connectorHostAllowed(url, env.MUNICIPALITY_CONNECTOR_ALLOWED_HOSTS) && matchesLocation(item, location));
   }).slice(0, 20).map((item, index) => ({
     ...item,
-    id: clean(item.id, 120) || `municipality-${index + 1}`
+    id: clean(item.id, 120) || `municipality-${index + 1}`,
+    authorized: item.authorized === true,
+    automatedQueryAllowed: item.automatedQueryAllowed === true
   }));
 }
 
@@ -486,7 +489,12 @@ function actionToSource(action) {
     authentication: action.authentication || null,
     termsUrl: action.termsUrl || null,
     accessMode: action.accessMode || null,
-    automatedQueryAllowed: action.automatedQueryAllowed === true
+    automatedQueryAllowed: action.automatedQueryAllowed === true,
+    sourceClass: action.sourceClass || null,
+    accessRequirement: action.accessRequirement || null,
+    automationPolicy: action.automationPolicy || null,
+    dataClaim: action.dataClaim || null,
+    userActionRequired: action.userActionRequired === true
   };
 }
 
@@ -575,7 +583,7 @@ function blockedHostname(hostname) {
   const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
   if (host === '::' || host === '::1' || host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab]/.test(host)) return true;
-  if (host.startsWith('::ffff:127.') || host.startsWith('::ffff:10.') || host.startsWith('::ffff:192.168.')) return true;
+  if (host.startsWith('::ffff:')) return true;
   const parts = host.split('.');
   if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
     const [a, b] = parts.map(Number);
@@ -588,9 +596,83 @@ function safeHttpsUrl(value) {
   if (!value) return null;
   try {
     const url = new URL(String(value));
-    if (url.protocol !== 'https:' || url.username || url.password || blockedHostname(url.hostname)) return null;
+    if (url.protocol !== 'https:' || url.username || url.password || !['', '443'].includes(url.port) || blockedHostname(url.hostname)) return null;
     return url.toString();
   } catch { return null; }
+}
+
+function accessPolicyFor(item = {}) {
+  const mode = String(item.accessMode || '');
+  const kind = String(item.kind || '');
+  const url = String(item.url || '');
+  const authenticated = ['official-login-service', 'official-search'].includes(mode) || /(?:^|\.)turkiye\.gov\.tr(?=\/|$)/i.test(url.replace(/^https?:\/\//, ''));
+  if (authenticated) return {
+    sourceClass: 'authenticated-official', accessRequirement: 'Kullanıcı resmî portalı açmalı; hizmet oturum isteyebilir.',
+    automationPolicy: 'routing-only', dataClaim: 'not-read', userActionRequired: true
+  };
+  if (mode === 'manual-only' || mode === 'configured-not-authorized') return {
+    sourceClass: 'public-manual', accessRequirement: 'Kullanıcı resmî portalı elle açmalıdır.',
+    automationPolicy: 'manual-only', dataClaim: 'not-read', userActionRequired: true
+  };
+  if (mode === 'discovery-only' || kind === 'discovery-search') return {
+    sourceClass: 'discovery-only', accessRequirement: 'Arama sonucu kullanıcı tarafından doğrulanmalıdır.',
+    automationPolicy: 'discovery-only', dataClaim: 'unverified-link', userActionRequired: true
+  };
+  if (mode === 'automatic-adapter' && item.authorized === true && item.automatedQueryAllowed === true) return {
+    sourceClass: 'authorized-adapter', accessRequirement: 'Yapılandırılmış kurum adaptörü.',
+    automationPolicy: 'authorized-automatic', dataClaim: 'eligible-after-parcel-match', userActionRequired: false
+  };
+  if ((kind === 'municipality-geodata' || kind === 'national-geodata' || mode === 'read-only-result') && item.machineReadableCandidate === true) return {
+    sourceClass: 'open-machine-readable', accessRequirement: 'Açık salt-okunur resmî kaynak.',
+    automationPolicy: 'read-only', dataClaim: 'eligible-after-parcel-match', userActionRequired: false
+  };
+  return {
+    sourceClass: 'public-manual', accessRequirement: 'Resmî bağlantı kullanıcı tarafından açılır.',
+    automationPolicy: 'routing-only', dataClaim: 'not-read', userActionRequired: true
+  };
+}
+
+function withAccessPolicy(item = {}) {
+  const policy = accessPolicyFor(item);
+  const automatic = ['authorized-automatic', 'read-only'].includes(policy.automationPolicy);
+  return {
+    ...item,
+    ...policy,
+    machineReadableCandidate: automatic && item.machineReadableCandidate === true,
+    automatedQueryAllowed: policy.automationPolicy === 'authorized-automatic'
+  };
+}
+
+function connectorHostAllowed(value, rawAllowlist) {
+  let url;
+  try { url = new URL(String(value)); } catch { return false; }
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (host.endsWith('.gov.tr') || host.endsWith('.bel.tr') || host === 'gov.tr' || host === 'bel.tr') return true;
+  const allowed = String(rawAllowlist || '').split(/[\s,;]+/).map((item) => item.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean);
+  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+
+async function fetchOfficialDirectory(url, options, timeoutMs, fetchImpl, retryCount = 1) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    try {
+      const response = await fetchImpl(url, { ...options, signal: controller.signal });
+      if (attempt < retryCount && (response.status === 429 || response.status >= 500)) continue;
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (error?.name === 'AbortError' || attempt >= retryCount) throw error;
+    } finally { clearTimeout(timer); }
+  }
+  if (lastError) throw lastError;
+  const timeoutError = new Error('Resmî kaynak zaman aşımına uğradı.');
+  timeoutError.name = 'AbortError';
+  throw timeoutError;
 }
 
 function arrayKeys(value) { return Array.isArray(value) ? value.map(normalize).filter(Boolean) : []; }

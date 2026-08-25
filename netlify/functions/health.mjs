@@ -28,7 +28,7 @@ export async function handler(event, context = {}) {
     },
     body: JSON.stringify({
       ok: true,
-      app: 'planlamasyon-v3.5.0',
+      app: 'planlamasyon-v3.6.0',
       runtime: runtimePlatform(context),
       modules: {
         tkgm: true,
@@ -47,7 +47,7 @@ export async function handler(event, context = {}) {
         embeddedPublicPlanRecords: EMBEDDED_PUBLIC_PLAN_RECORDS.length,
         publicPlanRecordApi: '/api/plan-records',
         officialZoningDocumentReader: true,
-        officialZoningDocumentParserVersion: '3.5.0',
+        officialZoningDocumentParserVersion: '3.6.0',
         officialZoningDocumentApi: '/api/parse-zoning-document',
         officialZoningDocumentFormats: ['pdf', 'html', 'txt', 'json', 'xml', 'image-ocr'],
         parcelDocumentMatchGuard: true,

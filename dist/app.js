@@ -2,13 +2,22 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const STORE_KEYS = {
-  works: 'planlamasyon-works-v3-1',
-  favorites: 'planlamasyon-favorites-v3-1',
+  works: 'planlamasyon-works-v3-6',
+  favorites: 'planlamasyon-favorites-v3-6',
   requests: 'planlamasyon-requests-v3-1',
   evidence: 'planlamasyon-evidence-v3-1',
   profile: 'planlamasyon-profile-v3-1',
   session: 'planlamasyon-identity-session-v3-1'
 };
+
+const LEGACY_STORE_KEYS = {
+  works: 'planlamasyon-works-v3-1',
+  favorites: 'planlamasyon-favorites-v3-1'
+};
+const STORAGE_SCHEMA_VERSION = 1;
+const STORAGE_MIGRATION_KEY = 'planlamasyon-storage-migrated-v3-6';
+const STORE_LIMITS = Object.freeze({ works: 60, favorites: 80, requests: 80 });
+const STORE_MAX_SERIALIZED_CHARS = 480_000;
 
 const elements = {
   themeSwitch: $('#themeSwitch'), startButton: $('#startButton'), openAiButton: $('#openAiButton'),
@@ -16,6 +25,7 @@ const elements = {
   profileInitials: $('#profileInitials'), profileSvg: $('#profileSvg'), profileMenuUser: $('#profileMenuUser'),
   profileMenuName: $('#profileMenuName'), profileMenuEmail: $('#profileMenuEmail'), profileAuthButton: $('#profileAuthButton'),
   profileLogoutButton: $('#profileLogoutButton'), parcelSection: $('#parcelSection'), connectionBanner: $('#connectionBanner'),
+  worksCount: $('#worksCount'), favoritesCount: $('#favoritesCount'),
   parcelForm: $('#parcelForm'), province: $('#provinceSelect'), district: $('#districtSelect'), neighbourhood: $('#neighbourhoodSelect'),
   block: $('#blockInput'), parcel: $('#parcelInput'), submit: $('#parcelSubmit'), resetMap: $('#resetMapButton'),
   mapClick: $('#mapClickButton'), mapCaption: $('#mapCaption'), mapLoading: $('#mapLoading'), mapUnavailable: $('#mapUnavailable'),
@@ -36,7 +46,7 @@ const elements = {
   planRecordsCard: $('#planRecordsCard'), planRecordsBadge: $('#planRecordsBadge'), planRecordsIntro: $('#planRecordsIntro'), planRecordsGrid: $('#planRecordsGrid'),
   sourceScanCard: $('#sourceScanCard'), sourceScanBadge: $('#sourceScanBadge'), sourceScanIntro: $('#sourceScanIntro'), sourceScanGrid: $('#sourceScanGrid'), retrySourceScanButton: $('#retrySourceScanButton'),
   planAiCard: $('#planAiCard'), planAiBadge: $('#planAiBadge'), planAiIntro: $('#planAiIntro'), planAiEvidence: $('#planAiEvidence'), planAiAskButton: $('#planAiAskButton'),
-  roadmap: $('#roadmap'), claimList: $('#claimList'), sourceList: $('#sourceList'), favoriteButton: $('#favoriteButton'), shareSummaryButton: $('#shareSummaryButton'),
+  roadmap: $('#roadmap'), claimList: $('#claimList'), sourceList: $('#sourceList'), favoriteButton: $('#favoriteButton'), shareSummaryButton: $('#shareSummaryButton'), printReportButton: $('#printReportButton'), printReport: $('#printReport'),
   drawer: $('#sideDrawer'), drawerBackdrop: $('#drawerBackdrop'), drawerTitle: $('#drawerTitle'), drawerContent: $('#drawerContent'),
   drawerClose: $('#drawerClose'), toast: $('#toast')
 };
@@ -56,6 +66,7 @@ boot().catch((error) => {
 });
 
 async function boot() {
+  migrateLocalCollections();
   setupTheme();
   setupHeader();
   setupDrawer();
@@ -63,6 +74,7 @@ async function boot() {
   setupMap();
   setupActions();
   setupFooter();
+  updateSavedCounts();
   updateProfileUi();
   void initializeIdentity();
 
@@ -487,6 +499,7 @@ function setVerificationChip(element, text, variant) {
   if (!element) return;
   element.textContent = text;
   element.className = `verification-chip ${variant || 'is-neutral'}`;
+  element.setAttribute('aria-label', text);
 }
 
 function renderVerificationStatus(analysis = {}) {
@@ -987,12 +1000,12 @@ function renderPlanAi(planAi = {}) {
 
 function openPlanAiDrawer() {
   if (!state.analysis) {
-    openDrawer('✦ Plan AI · v3.5.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
+    openDrawer('✦ Plan AI · v3.6.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
     return;
   }
   const ai = state.analysis.planAi || {};
   const degraded = Boolean(ai.degraded || ai.configured === false || ['disabled', 'unavailable', 'no-values', 'review-required'].includes(ai.status));
-  openDrawer('✦ Plan AI · v3.5.0', `
+  openDrawer('✦ Plan AI · v3.6.0', `
     <div class="plan-ai-chat">
       <div class="plan-ai-chat-status"><strong>${escapeHtml(degraded ? 'Sınırlı açıklama modu' : 'Plan AI aktif')}</strong><span>${escapeHtml(degraded ? 'Canlı AI yanıt veremezse yalnız mevcut analizde yazan değerler özetlenir; yeni imar değeri tahmin edilmez.' : ai.message || 'Mevcut analiz üzerinden soru sorabilirsiniz.')}</span></div>
       <div class="plan-ai-suggestions">
@@ -1170,6 +1183,7 @@ function setupActions() {
   });
   elements.favoriteButton.addEventListener('click', toggleFavorite);
   elements.shareSummaryButton?.addEventListener('click', shareCurrentSummary);
+  elements.printReportButton?.addEventListener('click', openReportPanel);
   elements.metricQuality?.addEventListener('click', () => elements.metricQuality.classList.toggle('is-expanded'));
   elements.addEvidenceButton.addEventListener('click', openEvidenceForm);
   elements.requestAnalysisButton.addEventListener('click', openRequestForm);
@@ -1195,6 +1209,7 @@ function buildShareSummary() {
   const analysis = state.analysis || {};
   const fields = analysis.zoning?.fields || {};
   const metrics = analysis.metrics || {};
+  const report = buildReportModel();
   const lines = [
     `Parsel: ${[p.province, p.district, p.neighbourhood].filter(Boolean).join(' / ')} · ${p.block || '—'}/${p.parcel || '—'}`,
     `Kadastro alanı: ${formatArea(p.area, p.areaText)}`,
@@ -1208,9 +1223,195 @@ function buildShareSummary() {
   if (fields.hmax != null) lines.push(`Yençok/Hmax: ${formatNumber(fields.hmax)} m`);
   if (metrics.footprint?.value != null) lines.push(`Teorik taban oturumu: ${metrics.footprint.display}`);
   if (metrics.construction?.value != null) lines.push(`Emsale esas teorik alan: ${metrics.construction.display}`);
+  if (report.missingLabels.length) lines.push(`Doğrulanmayan alanlar: ${report.missingLabels.slice(0, 8).join(', ')}${report.missingLabels.length > 8 ? '…' : ''}`);
+  if (report.sources.length) lines.push(`Kaynaklar: ${report.sources.slice(0, 3).map((source) => `${source.title}${source.date ? ` (${source.date})` : ''}`).join('; ')}`);
+  lines.push(`Rapor zamanı: ${report.generatedAt}`);
   lines.push('Bilgi amaçlıdır; ruhsat ve kesin hak için yetkili idarenin güncel kaydı esas alınır.');
   return lines.join('\n');
 }
+
+function openReportPanel() {
+  if (!state.parcelFeature) return showToast('Önce bir parsel sorgulayın.');
+  const report = buildReportModel();
+  const printMarkup = renderPrintableReport(report);
+  elements.printReport.innerHTML = printMarkup;
+  openDrawer('Parsel Raporu', `
+    <div class="report-preview-card">
+      <span class="section-kicker">Yazdırılabilir müşteri özeti</span>
+      <h4>${escapeHtml(report.location)} · ${escapeHtml(report.blockParcel)}</h4>
+      <p>${report.zoningVerified ? 'Doğrulanabilen imar değerleri kaynaklarıyla rapora eklendi.' : 'İmar değerleri doğrulanmadı; raporda eksik alanlar açıkça işaretlendi.'}</p>
+      <div class="report-preview-stats">
+        <span><strong>${report.verifiedCount}</strong> doğrulanan alan</span>
+        <span><strong>${report.missingLabels.length}</strong> doğrulanmayan alan</span>
+        <span><strong>${report.sources.length}</strong> kaynak</span>
+      </div>
+    </div>
+    <div class="drawer-help report-save-help"><strong>PDF olarak indirmek için:</strong><br>“PDF / Yazdır” düğmesine basın. Açılan telefon veya tarayıcı ekranında “PDF olarak kaydet” seçeneğini seçin.</div>
+    <div class="report-panel-actions">
+      <button class="button button-primary" id="reportPrintAction" type="button">PDF / Yazdır</button>
+      <button class="button button-secondary" id="reportCopyAction" type="button">Özeti Kopyala</button>
+    </div>
+    <details class="report-missing-details" ${report.missingLabels.length ? '' : 'hidden'}>
+      <summary>Doğrulanmayan alanları göster</summary>
+      <ul>${report.missingLabels.map((label) => `<li>${escapeHtml(label)}</li>`).join('')}</ul>
+    </details>`);
+  $('#reportPrintAction', elements.drawerContent)?.addEventListener('click', printCurrentReport);
+  $('#reportCopyAction', elements.drawerContent)?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(buildShareSummary());
+      showToast('Rapor özeti panoya kopyalandı.');
+    } catch { showToast('Özet bu tarayıcıda kopyalanamadı.'); }
+  });
+}
+
+function printCurrentReport() {
+  if (!state.parcelFeature || typeof window.print !== 'function') return showToast('Yazdırma bu tarayıcıda kullanılamıyor.');
+  const report = buildReportModel();
+  elements.printReport.innerHTML = renderPrintableReport(report);
+  elements.printReport.setAttribute('aria-hidden', 'false');
+  document.documentElement.classList.add('is-printing-report');
+  const previousTitle = document.title;
+  document.title = `Planlamasyon-${safeFilePart(report.blockParcel)}`;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    document.title = previousTitle;
+    document.documentElement.classList.remove('is-printing-report');
+    elements.printReport.setAttribute('aria-hidden', 'true');
+  };
+  window.addEventListener('afterprint', cleanup, { once: true });
+  setTimeout(cleanup, 30_000);
+  window.print();
+}
+
+function buildReportModel(now = new Date()) {
+  const p = state.parcelFeature?.properties || {};
+  const analysis = state.analysis || {};
+  const zoning = analysis.zoning || {};
+  const fields = zoning.fields || {};
+  const fieldSources = zoning.fieldSources || {};
+  const locationText = [p.province, p.district, p.neighbourhood].filter(Boolean).join(' / ') || 'Konum belirtilmedi';
+  const rows = [
+    reportFieldRow('Plan adı', fields.planName || analysis.planContext?.metadata?.planName, fieldSources.planName),
+    reportFieldRow('Plan ölçeği', fields.planScale || analysis.planContext?.metadata?.planScale, fieldSources.planScale),
+    reportFieldRow('Plan fonksiyonu', fields.landUse, fieldSources.landUse),
+    reportFieldRow('Net imar parseli alanı', fields.netParcelArea != null ? `${formatNumber(fields.netParcelArea)} m²` : null, fieldSources.netParcelArea),
+    reportFieldRow('TAKS', fields.taks != null ? formatNumber(fields.taks) : null, fieldSources.taks),
+    reportFieldRow('KAKS / Emsal', fields.emsal != null ? formatNumber(fields.emsal) : null, fieldSources.emsal),
+    reportFieldRow('Kat adedi', fields.floors != null ? `${formatNumber(fields.floors)} kat` : null, fieldSources.floors),
+    reportFieldRow('Yençok / Hmax', fields.hmax != null ? `${formatNumber(fields.hmax)} m` : null, fieldSources.hmax),
+    reportFieldRow('Yapı nizamı', fields.buildingOrder, fieldSources.buildingOrder),
+    reportFieldRow('Ön bahçe çekme mesafesi', reportSetbackValue(fields, 'front', fields.frontSetback), fieldSources.setbackConditions || fieldSources.frontSetback),
+    reportFieldRow('Yan bahçe çekme mesafesi', reportSetbackValue(fields, 'side', fields.sideSetback), fieldSources.setbackConditions || fieldSources.sideSetback),
+    reportFieldRow('Arka bahçe çekme mesafesi', reportSetbackValue(fields, 'rear', fields.rearSetback), fieldSources.setbackConditions || fieldSources.rearSetback)
+  ];
+  const metricRows = [
+    reportMetricRow('En fazla kat', analysis.metrics?.floors),
+    reportMetricRow('Teorik taban oturumu', analysis.metrics?.footprint),
+    reportMetricRow('Emsale esas teorik toplam alan', analysis.metrics?.construction),
+    reportMetricRow('Teorik taban oturumu dışında kalan alan', analysis.metrics?.outside)
+  ];
+  const sourceCandidates = [...(Array.isArray(analysis.sources) ? analysis.sources : []), ...Object.values(fieldSources).filter((source) => source && typeof source === 'object')];
+  const sourceMap = new Map();
+  for (const source of sourceCandidates) {
+    const title = cleanStoreText(source.title || source.provider || 'Resmî kaynak', 180);
+    const url = safeStoredUrl(source.url || source.sourceUrl);
+    const key = cleanStoreText(source.id || url || title, 500);
+    if (!key) continue;
+    const nextSource = {
+      title,
+      provider: cleanStoreText(source.provider || '', 160),
+      url,
+      date: reportSourceDate(source),
+      trust: reportTrustLabel(source.trust || source.confidence || source.extractionConfidence)
+    };
+    const previous = sourceMap.get(key);
+    sourceMap.set(key, previous ? {
+      title: previous.title || nextSource.title,
+      provider: previous.provider || nextSource.provider,
+      url: previous.url || nextSource.url,
+      date: previous.date || nextSource.date,
+      trust: previous.trust || nextSource.trust
+    } : nextSource);
+  }
+  const missingLabels = rows.filter((row) => !row.verified).map((row) => row.label);
+  return {
+    location: locationText,
+    blockParcel: `${p.block || '—'}-${p.parcel || '—'}`,
+    blockParcelDisplay: `${p.block || '—'} ada ${p.parcel || '—'} parsel`,
+    cadastralArea: formatArea(p.area, p.areaText),
+    quality: cleanStoreText(p.quality || 'Belirtilmemiş', 500),
+    mapSheet: cleanStoreText(p.mapSheet || 'Belirtilmemiş', 100),
+    generatedAt: new Intl.DateTimeFormat('tr-TR', { dateStyle: 'long', timeStyle: 'short' }).format(now),
+    zoningVerified: hasVerifiedZoning(analysis),
+    status: reportStatusText(analysis),
+    explanation: cleanStoreText(analysis.explanation || elements.plainExplanation?.textContent || '', 1400),
+    rows,
+    metricRows,
+    missingLabels,
+    verifiedCount: rows.filter((row) => row.verified).length + metricRows.filter((row) => row.verified).length,
+    sources: [...sourceMap.values()].slice(0, 16)
+  };
+}
+
+function reportFieldRow(label, value, source) {
+  const hasValue = value != null && String(value).trim() !== '';
+  const hasSource = Boolean(source && typeof source === 'object' && (source.id || source.title || source.provider || source.url || source.sourceUrl));
+  const verified = hasValue && hasSource;
+  return {
+    label,
+    value: verified ? cleanStoreText(value, 700) : hasValue ? `${cleanStoreText(value, 620)} — kaynak izi doğrulanmadı` : 'Doğrulanmadı — güncel resmî belge gerekli',
+    verified,
+    provenance: verified ? zoningFieldProvenance(source) : ''
+  };
+}
+
+function reportMetricRow(label, metric) {
+  const verified = metric?.value != null && metric?.display && metric.display !== 'Doğrulanamadı';
+  return { label, value: verified ? cleanStoreText(metric.display, 160) : 'Hesaplanmadı — dayanak imar değeri eksik', verified, provenance: verified ? cleanStoreText(metric.basis || '', 220) : '' };
+}
+
+function reportSetbackValue(fields, type, scalar) {
+  const conditional = (Array.isArray(fields.setbackConditions) ? fields.setbackConditions : [])
+    .filter((item) => item?.type === type && Number.isFinite(Number(item.value)));
+  if (conditional.length) return conditional.map((item) => `${item.qualifier ? `${item.qualifier}: ` : ''}${formatNumber(item.value)} m`).join(' · ');
+  return scalar != null ? `${formatNumber(scalar)} m` : null;
+}
+
+function reportStatusText(analysis = {}) {
+  if (analysis.status === 'complete') return 'Doğrulanabilen imar analizi hazır';
+  if (analysis.status === 'partial') return 'Kısmi imar analizi — eksik alanlar var';
+  if (analysis.status === 'conflict') return 'Kaynak çelişkisi — yetkili idare teyidi gerekli';
+  return 'Kadastro doğrulandı; imar ve yapı hakkı doğrulanmadı';
+}
+
+function reportSourceDate(source = {}) {
+  const raw = source.documentDate || source.retrievedAt || source.extractedAt || '';
+  if (!raw) return '';
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? cleanStoreText(String(raw).slice(0, 10), 20) : new Intl.DateTimeFormat('tr-TR').format(date);
+}
+
+function reportTrustLabel(value) {
+  return ({ verified: 'Doğrulanmış kaynak', 'user-evidence': 'Kullanıcının resmî belgesi', 'ai-assisted-official': 'Resmî kaynakta kanıt destekli', high: 'Yüksek güven', medium: 'Orta güven', low: 'Düşük güven' })[value] || cleanStoreText(value || 'Bilgi amaçlı kaynak', 80);
+}
+
+function renderPrintableReport(report) {
+  const rowMarkup = (row) => `<tr class="${row.verified ? 'report-verified' : 'report-unverified'}"><th>${escapeHtml(row.label)}</th><td><strong>${escapeHtml(row.value)}</strong>${row.provenance ? `<small>${escapeHtml(row.provenance)}</small>` : ''}</td><td>${row.verified ? 'Doğrulandı' : 'Doğrulanmadı'}</td></tr>`;
+  const sourceMarkup = report.sources.length ? report.sources.map((source, index) => `<li><strong>${index + 1}. ${escapeHtml(source.title)}</strong>${source.provider ? `<span>${escapeHtml(source.provider)}</span>` : ''}<small>${escapeHtml([source.date, source.trust].filter(Boolean).join(' · '))}</small>${source.url ? `<a href="${escapeHtml(source.url)}">${escapeHtml(source.url)}</a>` : ''}</li>`).join('') : '<li><strong>İmar kaynağı bulunamadı.</strong><span>Yetkili idarenin güncel yazılı kaydı alınmalıdır.</span></li>';
+  return `<article class="print-report-sheet">
+    <header class="print-report-head"><div><span>PLANLAMASYON</span><h1>Parsel Bilgi ve İmar Analiz Raporu</h1></div><div><strong>${escapeHtml(report.blockParcelDisplay)}</strong><small>${escapeHtml(report.generatedAt)}</small></div></header>
+    <section class="print-report-alert ${report.zoningVerified ? 'is-verified' : 'is-unverified'}"><strong>${escapeHtml(report.status)}</strong><p>${report.zoningVerified ? 'Aşağıdaki doğrulanmış değerler gösterilen kaynak ve tarihlere dayanır.' : 'Kadastro sonucu yapı hakkı değildir. Doğrulanmayan imar değerleri tahmin edilmemiştir.'}</p></section>
+    <section><h2>Parsel bilgileri</h2><dl class="print-parcel-grid"><div><dt>Konum</dt><dd>${escapeHtml(report.location)}</dd></div><div><dt>Ada / Parsel</dt><dd>${escapeHtml(report.blockParcelDisplay)}</dd></div><div><dt>Kadastro alanı</dt><dd>${escapeHtml(report.cadastralArea)}</dd></div><div><dt>TKGM niteliği</dt><dd>${escapeHtml(report.quality)}</dd></div><div><dt>Pafta</dt><dd>${escapeHtml(report.mapSheet)}</dd></div></dl></section>
+    <section><h2>İmar ve yapılaşma koşulları</h2><table><thead><tr><th>Alan</th><th>Değer / dayanak</th><th>Durum</th></tr></thead><tbody>${report.rows.map(rowMarkup).join('')}</tbody></table></section>
+    <section><h2>Teorik hesaplar</h2><table><thead><tr><th>Hesap</th><th>Sonuç / dayanak</th><th>Durum</th></tr></thead><tbody>${report.metricRows.map(rowMarkup).join('')}</tbody></table></section>
+    <section><h2>Kaynaklar ve tarihler</h2><ol class="print-source-list">${sourceMarkup}</ol></section>
+    <footer class="print-report-foot"><strong>Önemli:</strong> Bu rapor bilgi amaçlıdır; tapu, kesin sınır, aplikasyon, proje, ruhsat ve yapı hakkı için yetkili idarenin güncel, yazılı ve parsele özel kaydı esas alınır. Kaynağı bulunmayan alanlar doğrulanmış kabul edilmez.</footer>
+  </article>`;
+}
+
+function safeFilePart(value) { return String(value || 'parsel').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'parsel'; }
 
 async function onMapClick(event) {
   if (!state.mapClickActive) return;
@@ -1241,7 +1442,7 @@ function openEvidenceForm() {
 
       <section class="document-reader-card" aria-labelledby="documentReaderTitle">
         <div class="document-reader-heading">
-          <div><span class="section-kicker">Belge okuma motoru · v3.5.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
+          <div><span class="section-kicker">Belge okuma motoru · v3.6.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
           <span class="data-badge" id="documentReaderBadge">Hazır</span>
         </div>
         <div class="document-tabs" role="tablist" aria-label="Belge giriş yöntemi">
@@ -1675,18 +1876,24 @@ function openProfilePanel(panel) {
 }
 
 function openSavedList(title, items, kind) {
+  const maxItems = STORE_LIMITS[kind] || STORE_LIMITS.requests;
+  const listHeader = `<div class="saved-list-header"><div><strong>${items.length} kayıt</strong><span>En fazla ${maxItems} kayıt güvenli biçimde bu cihazda tutulur.</span></div>${items.length ? '<button type="button" id="clearSavedListButton">Tümünü Temizle</button>' : ''}</div>`;
   const html = items.length ? `<div class="drawer-list">${items.map((item, index) => `
     <article class="drawer-item"><strong>${escapeHtml(item.title || 'Kayıt')}</strong><span>${escapeHtml(item.subtitle || item.createdAt || '')}</span>
     <div class="drawer-item-meta">${item.status ? `<span class="drawer-chip">${escapeHtml(item.status)}</span>` : ''}${item.snapshot?.analysisStatus ? `<span class="drawer-chip">${escapeHtml(item.snapshot.analysisStatus)}</span>` : ''}</div>
-    <div class="drawer-list-actions">${item.query?.neighbourhoodId && item.query?.block && item.query?.parcel ? `<button data-open-index="${index}">Parseli Aç</button>` : ''}<button data-delete-index="${index}">Sil</button></div></article>`).join('')}</div>` : '<div class="drawer-empty">Henüz kayıt bulunmuyor.</div>';
-  openDrawer(title, (state.accountSyncEnabled ? '' : '<div class="auth-status local-storage-notice"><strong>Bu cihazda saklanıyor.</strong><br>Bu kayıtlar başka cihazlara otomatik aktarılmaz.</div>') + html);
-  $('[data-open-index]', elements.drawerContent).forEach((button) => button.addEventListener('click', async () => {
+    <div class="drawer-list-actions">${item.query?.neighbourhoodId && item.query?.block && item.query?.parcel ? `<button data-open-index="${index}" aria-label="${escapeHtml(item.title || 'Parsel')} kaydını aç">Parseli Aç</button>` : ''}<button data-delete-index="${index}" aria-label="${escapeHtml(item.title || 'Kayıt')} kaydını sil">Sil</button></div></article>`).join('')}</div>` : '<div class="drawer-empty">Henüz kayıt bulunmuyor.</div>';
+  openDrawer(title, (state.accountSyncEnabled ? '' : '<div class="auth-status local-storage-notice"><strong>Bu cihazda saklanıyor.</strong><br>Veriler sürümlü ve sınırlı tarayıcı hafızasında tutulur; başka cihazlara otomatik aktarılmaz.</div>') + listHeader + html);
+  $$('[data-open-index]', elements.drawerContent).forEach((button) => button.addEventListener('click', async () => {
     const item = items[Number(button.dataset.openIndex)]; closeDrawer(); await reopenSavedItem(item);
   }));
   $$('[data-delete-index]', elements.drawerContent).forEach((button) => button.addEventListener('click', () => {
     const index = Number(button.dataset.deleteIndex); const next = items.filter((_, itemIndex) => itemIndex !== index);
-    writeArrayStore(STORE_KEYS[kind], next); scheduleUserSync(); openSavedList(title, next, kind); showToast('Kayıt silindi.');
+    writeArrayStore(STORE_KEYS[kind], next); updateSavedCounts(); scheduleUserSync(); openSavedList(title, next, kind); showToast('Kayıt silindi.');
   }));
+  $('#clearSavedListButton', elements.drawerContent)?.addEventListener('click', () => {
+    if (!window.confirm(`${title} içindeki ${items.length} kayıt bu cihazdan silinsin mi?`)) return;
+    writeArrayStore(STORE_KEYS[kind], []); updateSavedCounts(); scheduleUserSync(); openSavedList(title, [], kind); showToast('Kayıtlar bu cihazdan temizlendi.');
+  });
 }
 
 async function reopenSavedItem(item) {
@@ -1712,7 +1919,7 @@ function saveWork() {
     snapshot: { area: Number(p.area) || null, quality: p.quality, mapSheet: p.mapSheet, analysisStatus: state.analysis?.status, explanation: state.analysis?.explanation, metrics: state.analysis?.metrics || {} },
     sources: (state.analysis?.sources || []).map((source) => ({ id: source.id, title: source.title, url: source.url }))
   };
-  upsertCollection(STORE_KEYS.works, item, 60); scheduleUserSync();
+  upsertCollection(STORE_KEYS.works, item, STORE_LIMITS.works); updateSavedCounts(); scheduleUserSync();
 }
 
 function toggleFavorite() {
@@ -1730,16 +1937,22 @@ function toggleFavorite() {
       snapshot: { area: Number(p.area) || null, quality: p.quality, analysisStatus: state.analysis?.status, explanation: state.analysis?.explanation, metrics: state.analysis?.metrics || {} },
       sources: (state.analysis?.sources || []).map((source) => ({ id: source.id, title: source.title, url: source.url }))
     };
-    writeArrayStore(STORE_KEYS.favorites, [item, ...items].slice(0, 80));
+    writeArrayStore(STORE_KEYS.favorites, [item, ...items].slice(0, STORE_LIMITS.favorites));
   }
-  syncFavoriteButton(); scheduleUserSync(); showToast(exists ? 'Favorilerden çıkarıldı.' : 'Favorilere eklendi.');
+  syncFavoriteButton(); updateSavedCounts(); scheduleUserSync(); showToast(exists ? 'Favorilerden çıkarıldı.' : 'Favorilere eklendi.');
 }
 
 function syncFavoriteButton() {
-  if (!state.parcelFeature) return;
-  const exists = readArrayStore(STORE_KEYS.favorites).some((item) => item.id === parcelKey(state.parcelFeature));
+  const exists = Boolean(state.parcelFeature && readArrayStore(STORE_KEYS.favorites).some((item) => item.id === parcelKey(state.parcelFeature)));
   elements.favoriteButton.classList.toggle('is-active', exists);
   elements.favoriteButton.textContent = exists ? '★ Favorilere Eklendi' : '☆ Favorilere Ekle';
+  elements.favoriteButton.setAttribute('aria-pressed', String(exists));
+  elements.favoriteButton.setAttribute('aria-label', exists ? 'Parseli favorilerden çıkar' : 'Parseli favorilere ekle');
+}
+
+function updateSavedCounts() {
+  if (elements.worksCount) elements.worksCount.textContent = String(readArrayStore(STORE_KEYS.works).length);
+  if (elements.favoritesCount) elements.favoritesCount.textContent = String(readArrayStore(STORE_KEYS.favorites).length);
 }
 
 async function initializeIdentity() {
@@ -1909,7 +2122,7 @@ async function pullUserData() {
     writeArrayStore(STORE_KEYS.requests, mergeCollections(readArrayStore(STORE_KEYS.requests), remote.requests || []));
     writeObjectStore(STORE_KEYS.evidence, { ...(remote.evidence || {}), ...readObjectStore(STORE_KEYS.evidence) });
     writeObjectStore(STORE_KEYS.profile, { ...(remote.profile || {}), ...readObjectStore(STORE_KEYS.profile) });
-    await pushUserData(); updateProfileUi();
+    await pushUserData(); updateProfileUi(); updateSavedCounts();
   } catch (error) { console.warn('Kullanıcı verisi eşitlenemedi:', error); }
 }
 
@@ -2103,11 +2316,159 @@ function defaultRoadmap() { return [{step:1,title:'İmar durumunu doğrula',desc
 function defaultOfficialActions() { return [{id:'eplan-national',title:'e-Plan İmar Durumu',provider:'Çevre, Şehircilik ve İklim Değişikliği Bakanlığı',url:'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html',kind:'national-portal',status:'official-portal',accessMode:'public-portal',note:'Türkiye geneli resmî imar durumu portalı.'},{id:'tucbs-national',title:'TUCBS Coğrafi Açık Veri',provider:'Ulusal Coğrafi Bilgi Platformu',url:'https://ucbp.tucbs.gov.tr/cografi-acik-veri-platformu',kind:'national-geodata',status:'official-portal',accessMode:'public-portal',note:'Kamuya açık coğrafi katmanlar.'}]; }
 function defaultSources() { return [{id:'tkgm-parcel',title:'TKGM Parsel Sorgu / MEGSİS',kind:'cadastre',trust:'public-information',url:'https://parselsorgu.tkgm.gov.tr/',note:'Parsel konumu ve temel kadastro bilgileri bilgi amaçlıdır.'},{id:'eplan-official',title:'e-Plan',kind:'official-portal',trust:'lookup-required',url:'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html',note:'Yürürlükteki plan, plan notu ve imar durumu için resmî portal.'}]; }
 
-function readArrayStore(key) { try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } }
-function writeArrayStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
+function migrateLocalCollections() {
+  try {
+    if (localStorage.getItem(STORAGE_MIGRATION_KEY) === String(STORAGE_SCHEMA_VERSION)) return;
+    let migrated = true;
+    for (const kind of ['works', 'favorites']) {
+      const legacy = readLegacyArrayStore(LEGACY_STORE_KEYS[kind]);
+      const current = readArrayStore(STORE_KEYS[kind]);
+      if (legacy.length) migrated = writeArrayStore(STORE_KEYS[kind], mergeCollections(current, legacy)) && migrated;
+    }
+    if (migrated) localStorage.setItem(STORAGE_MIGRATION_KEY, String(STORAGE_SCHEMA_VERSION));
+  } catch {}
+}
+
+function readLegacyArrayStore(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? sanitizeStoredCollection(key, value) : [];
+  } catch { return []; }
+}
+
+function readArrayStore(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    if (Array.isArray(value)) return sanitizeStoredCollection(key, value);
+    if (!value || typeof value !== 'object' || value.schemaVersion !== STORAGE_SCHEMA_VERSION || !Array.isArray(value.items)) return [];
+    return sanitizeStoredCollection(key, value.items);
+  } catch { return []; }
+}
+
+function writeArrayStore(key, value) {
+  try {
+    let items = sanitizeStoredCollection(key, Array.isArray(value) ? value : []);
+    let serialized = storageEnvelopeJson(key, items);
+    while (serialized.length > STORE_MAX_SERIALIZED_CHARS && items.length > 1) {
+      items = items.slice(0, -1);
+      serialized = storageEnvelopeJson(key, items);
+    }
+    localStorage.setItem(key, serialized);
+    return true;
+  } catch {
+    try {
+      const reduced = sanitizeStoredCollection(key, Array.isArray(value) ? value.slice(0, 12) : []);
+      localStorage.setItem(key, storageEnvelopeJson(key, reduced));
+      return true;
+    } catch { return false; }
+  }
+}
+
+function storageEnvelopeJson(key, items) {
+  return JSON.stringify({ schemaVersion: STORAGE_SCHEMA_VERSION, collection: storageKindFromKey(key), updatedAt: new Date().toISOString(), items });
+}
+
+function storageKindFromKey(key) {
+  if (key === STORE_KEYS.works || key === LEGACY_STORE_KEYS.works) return 'works';
+  if (key === STORE_KEYS.favorites || key === LEGACY_STORE_KEYS.favorites) return 'favorites';
+  if (key === STORE_KEYS.requests) return 'requests';
+  return 'items';
+}
+
+function sanitizeStoredCollection(key, value) {
+  const kind = storageKindFromKey(key);
+  const max = STORE_LIMITS[kind] || 60;
+  const seen = new Set();
+  const clean = [];
+  for (const candidate of value) {
+    const item = sanitizeStoredItem(candidate);
+    if (!item || seen.has(item.id)) continue;
+    seen.add(item.id);
+    clean.push(item);
+    if (clean.length >= max) break;
+  }
+  return clean;
+}
+
+function sanitizeStoredItem(candidate) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const id = cleanStoreText(candidate.id, 180);
+  if (!id) return null;
+  const item = {
+    id,
+    title: cleanStoreText(candidate.title || 'Kayıt', 180),
+    subtitle: cleanStoreText(candidate.subtitle, 260),
+    createdAt: safeStoredDate(candidate.createdAt),
+    updatedAt: safeStoredDate(candidate.updatedAt),
+    status: cleanStoreText(candidate.status, 120)
+  };
+  const query = sanitizeStoredQuery(candidate.query);
+  if (query) item.query = query;
+  const snapshot = sanitizeStoredSnapshot(candidate.snapshot);
+  if (snapshot) item.snapshot = snapshot;
+  if (Array.isArray(candidate.sources)) item.sources = candidate.sources.slice(0, 12).map(sanitizeStoredSource).filter(Boolean);
+  return item;
+}
+
+function sanitizeStoredQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return null;
+  const clean = {
+    province: cleanStoreText(query.province, 100), district: cleanStoreText(query.district, 100), neighbourhood: cleanStoreText(query.neighbourhood, 140),
+    neighbourhoodId: cleanStoreText(query.neighbourhoodId, 80), block: cleanStoreText(query.block, 40), parcel: cleanStoreText(query.parcel, 40)
+  };
+  return clean.neighbourhoodId && clean.block && clean.parcel ? clean : null;
+}
+
+function sanitizeStoredSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const area = Number(snapshot.area);
+  const clean = {
+    area: Number.isFinite(area) && area >= 0 && area <= 2_000_000_000 ? area : null,
+    quality: cleanStoreText(snapshot.quality, 500), mapSheet: cleanStoreText(snapshot.mapSheet, 100),
+    analysisStatus: cleanStoreText(snapshot.analysisStatus, 120), explanation: cleanStoreText(snapshot.explanation, 1200)
+  };
+  if (snapshot.metrics && typeof snapshot.metrics === 'object' && !Array.isArray(snapshot.metrics)) {
+    clean.metrics = {};
+    for (const key of ['floors', 'footprint', 'construction', 'outside']) {
+      const metric = snapshot.metrics[key];
+      if (!metric || typeof metric !== 'object') continue;
+      const numericValue = Number(metric.value);
+      clean.metrics[key] = {
+        value: Number.isFinite(numericValue) && Math.abs(numericValue) <= 2_000_000_000 ? numericValue : null,
+        display: cleanStoreText(metric.display, 120), basis: cleanStoreText(metric.basis, 220)
+      };
+    }
+  }
+  return clean;
+}
+
+function sanitizeStoredSource(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  const title = cleanStoreText(source.title || source.provider, 180);
+  if (!title) return null;
+  return { id: cleanStoreText(source.id, 140), title, url: safeStoredUrl(source.url || source.sourceUrl) };
+}
+
+function safeStoredDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function cleanStoreText(value, max = 240) {
+  return String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function safeStoredUrl(value) {
+  const text = cleanStoreText(value, 800);
+  if (!text) return '';
+  try { const url = new URL(text); return url.protocol === 'https:' ? url.href.slice(0, 800) : ''; }
+  catch { return ''; }
+}
+
 function readObjectStore(key) { try { const value = JSON.parse(localStorage.getItem(key) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { return {}; } }
 function writeObjectStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
-function upsertCollection(key, item, max) { const items = readArrayStore(key); writeArrayStore(key, [item, ...items.filter((entry) => entry.id !== item.id)].slice(0,max)); }
+function upsertCollection(key, item, max) { const items = readArrayStore(key); writeArrayStore(key, [item, ...items.filter((entry) => entry.id !== item.id)].slice(0,Math.min(max || 60, STORE_LIMITS[storageKindFromKey(key)] || 60))); }
 function mergeCollections(local, remote) { const map = new Map(); for (const item of [...remote,...local]) if (item?.id && !map.has(item.id)) map.set(item.id,item); return [...map.values()].sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||''))); }
 function initials(value) { const words = String(value || 'P').trim().split(/\s+/).filter(Boolean); return words.slice(0,2).map((word)=>word[0]).join('').toLocaleUpperCase('tr-TR') || 'P'; }
 function formatIsoDate(value) {

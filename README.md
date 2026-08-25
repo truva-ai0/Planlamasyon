@@ -1,4 +1,22 @@
-# Planlamasyon v3.5.0 — Hızlı ve İzinli Parsel Karar Akışı
+# Planlamasyon v3.6.0 — Kanıtlı Hesap ve Müşteri Raporu
+
+## v3.6.0 yenilikleri
+
+- Resmî imar belgesindeki TAKS, KAKS/emsal, Yençok/Hmax, kat adedi, yapı nizamı, net imar parseli alanı ve ön/yan/arka çekme mesafeleri daha geniş Türkçe yazım biçimleriyle okunur. Cepheye veya yol genişliğine bağlı birden fazla çekme koşulu tek sayıya indirilmeden korunur.
+- Teorik taban oturumu, emsale esas toplam alan ve taban oturumu dışında kalan alan yalnız doğrulanmış imar değerleriyle hesaplanır. Doğrulanmış net imar parseli alanı varsa hesap temeli odur; yoksa kadastro alanına dönüldüğü açıkça belirtilir. Şüpheli net alan otomatik hesaba alınmaz.
+- Sonuç ekranına kaynakları, belge tarihlerini, doğrulanan ve doğrulanmayan alanları birlikte gösteren A4 müşteri raporu eklendi. Telefonun veya tarayıcının yazdırma ekranından PDF olarak kaydedilebilir.
+- Paylaşım özeti artık eksik alanları, kullanılan kaynakları ve rapor zamanını içerir. Geçmiş sorgular ve favoriler sürümlü, boyutu sınırlı ve doğrulanan yerel kayıt yapısında saklanır; eski cihaz kayıtları güvenli biçimde taşınır.
+- Resmî açık veri, yetkili kurum adaptörü, manuel portal, keşif bağlantısı ve e-Devlet/oturum isteyen hizmetler ayrı erişim sınıflarıyla işaretlenir. Kapalı veya kullanıcı oturumu isteyen bağlantı otomatik okunmuş veri olarak kullanılamaz.
+- Dış kaynak isteklerinde HTTPS/yerel ağ korumaları, sınırlı zaman aşımı ve yalnız güvenli GET/HEAD yeniden denemesi uygulanır. Kaynak, tarih, güven ve alıntı izi birleştirme sırasında korunur.
+
+## Dağıtım
+
+- Üretim adresi: `https://planlamasyon.truvaai0.workers.dev/`
+- Cloudflare üretim dağıtımı GitHub `main` dalını izler.
+
+> Planlamasyon bir resmî ruhsat veya yapı hakkı belgesi üretmez. Bağlayıcı işlemde yetkili idarenin güncel, yazılı ve parsele özel kaydı esas alınır.
+
+# Önceki sürüm: Planlamasyon v3.5.0 — Hızlı ve İzinli Parsel Karar Akışı
 
 ## v3.5.0 yenilikleri
 

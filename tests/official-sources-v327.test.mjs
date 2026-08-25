@@ -258,7 +258,7 @@ test('geçici ağ hatası olan negatif tarama cachelenmez', async () => {
   const second = await discoverOpenOfficialZoning({ parcel, query: fictionalQuery, providerDiscovery, env, fetchImpl });
   assert.equal(second.status, 'available');
   assert.equal(second.records[0].fields.emsal, 0.8);
-  assert.equal(resultUrlCalls, 2);
+  assert.equal(resultUrlCalls, 3);
 });
 
 test('bütçe nedeniyle incomplete kalan negatif tarama cachelenmez', async () => {
@@ -313,7 +313,7 @@ test('Yençok kat değeri floors olur, metre Hmax ile karışmaz ve yapinizami e
     ].join('\n'),
     query: fictionalQuery
   });
-  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.5.0');
+  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.6.0');
   assert.equal(parsed.fields.floors, 25);
   assert.equal(parsed.fields.hmax, undefined);
   assert.equal(parsed.fields.buildingOrder, 'Ayrık');
@@ -379,7 +379,7 @@ test('açık kaynak etiket normalizasyonu yapinizami ve Yençok kat ayrımını 
     yapinizami: 'Ayrık Nizam',
     yencok: '25 kat'
   });
-  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.5.0');
+  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.6.0');
   assert.equal(fields.buildingOrder, 'Ayrık');
   assert.equal(fields.floors, 25);
   assert.equal(fields.hmax, null);

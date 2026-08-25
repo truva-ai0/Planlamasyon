@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet" href="/styles.css?v=3.5.0">
+  <link rel="stylesheet" href="/styles.css?v=3.6.0">
   <script>
     (() => {
       let theme = 'dark';
@@ -46,8 +46,8 @@
           <div class="profile-menu" id="profileMenu" hidden>
             <div class="profile-menu-user" id="profileMenuUser" hidden><strong id="profileMenuName">—</strong><span id="profileMenuEmail">—</span></div>
             <button data-panel="auth" id="profileAuthButton">Giriş Yap / Kayıt Ol</button>
-            <button data-panel="works">Çalışmalarım</button>
-            <button data-panel="favorites">Favorilerim</button>
+            <button data-panel="works" aria-label="Geçmiş sorgularımı aç"><span>Geçmiş Sorgularım</span><span class="profile-count" id="worksCount">0</span></button>
+            <button data-panel="favorites" aria-label="Favorilerimi aç"><span>Favorilerim</span><span class="profile-count" id="favoritesCount">0</span></button>
             <button data-panel="requests">Taleplerim</button>
             <button data-panel="account">Hesabım</button>
             <button class="danger" data-panel="logout" id="profileLogoutButton" hidden>Çıkış</button>
@@ -67,7 +67,7 @@
         <p>Parselinizi bulun. Planlamasyon kadastro, doğrulanabilen plan bilgileri, mevzuat ve yakın çevre verilerini tek sonuçta toplasın.</p>
         <div class="hero-actions">
           <button class="button button-primary" id="startButton" type="button">Projeni Başlat <span aria-hidden="true">→</span></button>
-          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.5</small></button>
+          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.6</small></button>
         </div>
         <div class="trust-row">
           <span>✓ Kaynak–sonuç ilişkisi</span>
@@ -141,9 +141,10 @@
     <section class="section result-section" id="resultSection" hidden aria-labelledby="resultTitle">
       <div class="result-topline">
         <div><span class="section-kicker">Parsel bulundu</span><h2 id="resultTitle">Parseliniz hakkında</h2></div>
-        <div class="result-actions">
-          <button class="favorite-button" id="shareSummaryButton" type="button">↗ Özeti Paylaş</button>
-          <button class="favorite-button" id="favoriteButton" type="button">☆ Favorilere Ekle</button>
+        <div class="result-actions" role="group" aria-label="Parsel sonucu işlemleri">
+          <button class="favorite-button report-button" id="printReportButton" type="button" aria-label="Yazdırılabilir parsel raporunu hazırla">▤ PDF / Rapor</button>
+          <button class="favorite-button" id="shareSummaryButton" type="button" aria-label="Parsel özetini paylaş">↗ Özeti Paylaş</button>
+          <button class="favorite-button" id="favoriteButton" type="button" aria-label="Parseli favorilere ekle" aria-pressed="false">☆ Favorilere Ekle</button>
         </div>
       </div>
 
@@ -159,10 +160,10 @@
           <div><dt>Tapu/kadastro kaydı</dt><dd id="mobileSummaryCadastre">Hazırlanıyor</dd></div>
           <div><dt>İmar ve yapı hakkı</dt><dd id="mobileSummaryZoning">Kontrol ediliyor</dd></div>
         </dl>
-        <div class="verification-status-row">
-          <span class="verification-chip is-ok" id="cadastreStatusChip">Kadastro doğrulandı</span>
-          <span class="verification-chip is-loading" id="zoningStatusChip">İmar kontrol ediliyor</span>
-          <span class="verification-chip is-neutral" id="aiStatusChip">AI isteğe bağlı</span>
+        <div class="verification-status-row" role="list" aria-label="Doğrulama durumları" aria-live="polite">
+          <span class="verification-chip is-ok" id="cadastreStatusChip" role="listitem">Kadastro doğrulandı</span>
+          <span class="verification-chip is-loading" id="zoningStatusChip" role="listitem">İmar kontrol ediliyor</span>
+          <span class="verification-chip is-neutral" id="aiStatusChip" role="listitem">AI isteğe bağlı</span>
         </div>
       </aside>
 
@@ -302,10 +303,12 @@
     </section>
 
     <footer class="site-footer">
-      <span>© 2026 PLANLAMASYON · v3.5.0</span>
+      <span>© 2026 PLANLAMASYON · v3.6.0</span>
       <nav><button data-footer-panel="about">Hakkımızda</button><button data-footer-panel="contact">İletişim</button><button data-footer-panel="privacy">Gizlilik</button><button data-footer-panel="terms">Kullanım Koşulları</button></nav>
     </footer>
   </main>
+
+  <section class="print-report" id="printReport" aria-hidden="true"></section>
 
   <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
   <aside class="side-drawer" id="sideDrawer" hidden role="dialog" aria-modal="true" aria-label="Planlamasyon paneli">
@@ -316,6 +319,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="/app.js?v=3.5.0"></script>
+  <script type="module" src="/app.js?v=3.6.0"></script>
 </body>
 </html>

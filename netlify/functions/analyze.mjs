@@ -48,7 +48,7 @@ export async function handler(event, context = {}) {
           planAi: { status: 'unavailable', enabled: true, configured: Boolean(boundedEnv.NVIDIA_API_KEY), canCalculate: false, evidenceBackedFields: [], evidence: [], attempts: [], message: 'Plan AI süre sınırı nedeniyle bu turda tamamlanamadı.' },
           planContext: { status: 'unavailable', matches: [], metadata: {}, records: [], sources: [] },
           providerDiscovery: { status: 'national-portals-ready', actions: [], sources: [], municipalServices: [], catalog: { embedded: true, matchCount: 0 }, message: 'Kaynak keşfi süre sınırına ulaştı; e-Plan bağlantısı manuel olarak kullanılabilir.' },
-          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.5.0', forceRefresh },
+          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.6.0', forceRefresh },
           diagnostics: [{ connector: 'analysis-deadline', message: 'İmar analizi güvenli süre sınırına ulaştı.' }],
           message: 'İmar servislerinden bazıları süre sınırı içinde yanıt vermedi; bulunan kadastro sonucu korunarak eksik alanlar işaretlendi.'
         })
@@ -61,13 +61,13 @@ export async function handler(event, context = {}) {
     ]);
 
     const zoning = zoningResult.status === 'fulfilled' ? zoningResult.value : {
-      status: 'unavailable', conflict: false, fields: {}, sources: [], message: String(zoningResult.reason?.message || 'İmar kaynağı alınamadı.')
+      status: 'unavailable', conflict: false, fields: {}, sources: [], message: safeDependencyMessage(zoningResult.reason, 'İmar kaynağı güvenli süre sınırı içinde alınamadı.')
     };
     const environment = environmentResult.status === 'fulfilled' ? environmentResult.value : {
-      status: 'unavailable', categories: [], items: [], message: String(environmentResult.reason?.message || 'Yakın çevre verisi alınamadı.')
+      status: 'unavailable', categories: [], items: [], message: safeDependencyMessage(environmentResult.reason, 'Yakın çevre verisi güvenli süre sınırı içinde alınamadı.')
     };
     const analysis = buildParcelAnalysis({ parcel, zoning, environment });
-    analysis.version = '3.5.0';
+    analysis.version = '3.6.0';
     analysis.forceRefreshed = forceRefresh;
     analysis.manualOnly = Boolean(zoning?.manualOnly || zoning?.status === 'manual-only');
     analysis.zoning.manualOnly = analysis.manualOnly;
@@ -108,7 +108,10 @@ function applyFieldProvenance(analysis, fieldSources) {
   };
   for (const row of analysis.technical || []) {
     const field = technicalFields[row.label];
-    if (field && fieldSources[field]?.title) row.source = fieldSources[field].title;
+    if (field && fieldSources[field]?.title) {
+      row.source = fieldSources[field].title;
+      row.sourceDetails = publicProvenance(fieldSources[field]);
+    }
   }
   const claimFields = {
     'Plan fonksiyonu': 'landUse', TAKS: 'taks', Emsal: 'emsal', 'Kat adedi': 'floors',
@@ -116,8 +119,36 @@ function applyFieldProvenance(analysis, fieldSources) {
   };
   for (const claim of analysis.claims || []) {
     const field = claimFields[claim.claim];
-    if (field && fieldSources[field]?.id) claim.sourceId = fieldSources[field].id;
+    if (field && fieldSources[field]?.id) {
+      claim.sourceId = fieldSources[field].id;
+      claim.sourceDetails = publicProvenance(fieldSources[field]);
+    }
   }
+}
+
+function publicProvenance(source = {}) {
+  return {
+    id: clean(source.id, 140), title: clean(source.title, 280), provider: clean(source.provider, 240),
+    url: safePublicHttpsUrl(source.url), trust: clean(source.trust, 60), sourceClass: clean(source.sourceClass, 80),
+    documentDate: clean(source.documentDate, 40), retrievedAt: clean(source.retrievedAt, 40),
+    confidence: clean(source.confidence || source.extractionConfidence, 40), excerpt: clean(source.excerpt, 520),
+    method: clean(source.method, 80), parserVersion: clean(source.parserVersion, 40),
+    parcelMatchStatus: clean(source.parcelMatchStatus, 40), accessMode: clean(source.accessMode, 80),
+    automationPolicy: clean(source.automationPolicy, 80), dataClaim: clean(source.dataClaim, 80)
+  };
+}
+
+function safePublicHttpsUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
+  } catch { return null; }
+}
+
+function safeDependencyMessage(error, fallback) {
+  const raw = String(error?.message || '').replace(/https?:\/\/[^\s)]+/gi, '[resmî kaynak]').replace(/Bearer\s+\S+/gi, 'Bearer [gizlendi]');
+  return clean(raw, 300) || fallback;
 }
 async function settleWithin(promise, timeoutMs, fallbackFactory) {
   let timer;

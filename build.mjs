@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 const SOURCE_DIRECTORIES = ['dist', 'netlify/functions', 'functions', 'src'];
 const TEST_DIRECTORIES = ['tests', 'postbuild-tests'];
 

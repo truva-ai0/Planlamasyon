@@ -9,6 +9,44 @@
     "directCatalogDistrictPairCount": 94,
     "automaticDataClaim": false
   },
+  "accessClasses": {
+    "open-machine-readable": {
+      "label": "Açık ve makine-okunabilir resmî kaynak",
+      "automaticRead": true,
+      "userLoginRequired": false,
+      "claimRule": "Yalnız dönen kayıt sorgudaki parsel ile doğrulanırsa veri olarak kullanılabilir."
+    },
+    "authorized-adapter": {
+      "label": "Yazılı izinli veya yapılandırılmış resmî adaptör",
+      "automaticRead": true,
+      "userLoginRequired": false,
+      "claimRule": "Adaptör açıkça yetkilendirilmiş ve alan adı izin listesinde olmalıdır."
+    },
+    "public-manual": {
+      "label": "Kullanıcının elle açacağı resmî portal",
+      "automaticRead": false,
+      "userLoginRequired": false,
+      "claimRule": "Bağlantının bulunması, portaldaki verinin otomatik okunduğu anlamına gelmez."
+    },
+    "authenticated-official": {
+      "label": "e-Devlet veya oturum gerektiren resmî hizmet",
+      "automaticRead": false,
+      "userLoginRequired": true,
+      "claimRule": "Planlamasyon giriş, CAPTCHA, çerez veya kullanıcı oturumunu devralmaz ve sonucu otomatik okunmuş göstermez."
+    },
+    "discovery-only": {
+      "label": "Yalnız resmî kaynak keşif bağlantısı",
+      "automaticRead": false,
+      "userLoginRequired": false,
+      "claimRule": "Arama sonucu doğrulanmadan resmî veri veya imar hakkı sayılmaz."
+    },
+    "user-official-document": {
+      "label": "Kullanıcının yüklediği resmî belge",
+      "automaticRead": false,
+      "userLoginRequired": false,
+      "claimRule": "Belge tarihi, düzenleyen idare ve ada/parsel eşleşmesi korunur; ruhsat öncesi yetkili idare teyidi gerekir."
+    }
+  },
   "portals": {
     "tkgmParcel": "https://parselsorgu.tkgm.gov.tr/",
     "eplanImar": "https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html",
@@ -27,6 +65,15 @@
     "automaticData": [
       "Yalnız açık lisansı doğrulanmış TUCBS katmanları veya açıkça yetkilendirilmiş kurum adaptörleri otomatik veri adayıdır.",
       "Ticari kadastro veri kullanımı için TAKPAS sözleşmesi ve ilgili kurum izinleri gerekir."
+    ],
+    "security": [
+      "Otomatik isteklerde yalnız HTTPS, genel ağ adresi ve izin verilen resmî/kurum alan adları kullanılır; localhost, özel ağ, kullanıcı bilgili URL ve farklı sunucuya form yönlendirmesi reddedilir.",
+      "Salt-okunur GET istekleri sınırlı süre ve en fazla bir güvenli yeniden deneme ile çalışır; form POST isteği otomatik yeniden denenmez.",
+      "Kimlik doğrulama, CAPTCHA, e-Devlet oturumu veya kullanım koşulu hiçbir şekilde aşılmaz."
+    ],
+    "provenance": [
+      "Belge tarihi, erişim tarihi, kaynak URL'si, güven düzeyi, ayrıştırma yöntemi ve alan bazlı kanıt mümkün olduğu sürece sonuçla birlikte korunur.",
+      "Kaynağı veya parsel eşleşmesi doğrulanmayan teknik değer hesaplamaya sokulmaz."
     ]
   },
   "officialReferences": [

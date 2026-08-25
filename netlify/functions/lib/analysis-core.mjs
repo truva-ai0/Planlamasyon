@@ -25,7 +25,9 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
   const zoningStatus = zoning?.status || 'unavailable';
   const calculationsAllowed = ['verified', 'user-evidence', 'ai-assisted-official'].includes(zoningStatus) && zoning?.conflict !== true;
   const fields = normalizeZoningFields(zoning?.fields || {});
-  const verifiedNetParcelArea = calculationsAllowed ? finitePositive(fields.netParcelArea) : null;
+  const netParcelAreaCandidate = calculationsAllowed ? finitePositive(fields.netParcelArea) : null;
+  const netParcelAreaPlausible = netParcelAreaCandidate == null || parcelArea == null || netParcelAreaCandidate <= parcelArea * 1.05;
+  const verifiedNetParcelArea = netParcelAreaPlausible ? netParcelAreaCandidate : null;
   const calculationArea = verifiedNetParcelArea ?? parcelArea;
   const calculationAreaKind = verifiedNetParcelArea != null ? 'net-imar-parseli-alani' : 'kadastro-parsel-alani';
   const calculationAreaLabel = verifiedNetParcelArea != null ? 'Doğrulanmış net imar parseli alanı' : 'Kadastro parsel alanı';
@@ -43,7 +45,15 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
     label: calculationArea != null ? calculationAreaLabel : 'Hesap alanı doğrulanamadı',
     cadastralParcelArea: parcelArea ?? null,
     netParcelArea: verifiedNetParcelArea,
-    sourceField: verifiedNetParcelArea != null ? 'netParcelArea' : 'parcel.area'
+    netParcelAreaCandidate,
+    netParcelAreaRejected: netParcelAreaCandidate != null && !netParcelAreaPlausible,
+    sourceField: verifiedNetParcelArea != null ? 'netParcelArea' : 'parcel.area',
+    fallbackUsed: verifiedNetParcelArea == null && parcelArea != null,
+    fallbackReason: verifiedNetParcelArea != null
+      ? null
+      : netParcelAreaCandidate != null
+        ? 'Net imar parseli alanı kadastro alanıyla tutarsız olduğu için hesapta kullanılmadı.'
+        : 'Doğrulanmış net imar parseli alanı bulunmadığı için kadastro alanı geçici hesap temeli olarak kullanıldı.'
   };
 
   const metrics = {
@@ -55,7 +65,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
 
   const possibilities = buildPossibilities(fields, { parcelArea, outside, floors });
   const missing = missingFields(fields, calculationsAllowed);
-  const warnings = buildWarnings({ zoning, fields, missing, environment });
+  const warnings = buildWarnings({ zoning, fields, missing, environment, calculationBasis });
   const explanation = buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing, calculationBasis });
   const technical = buildTechnical(properties, fields, zoning);
   const claims = buildClaims({ parcel, zoning: { ...zoning, fields }, environment, metrics, calculationBasis });
@@ -75,7 +85,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
         : 'cadastral-only';
 
   return {
-    version: '3.5.0',
+    version: '3.6.0',
     status,
     zoningStatus,
     calculatedAt: new Date().toISOString(),
@@ -195,6 +205,7 @@ function buildExplanation({ properties, parcelArea, zoning, fields, metrics, mis
   const sentences = [intro];
   if (fields.landUse) sentences.push(`Doğrulanan kaynakta kullanım kararı “${fields.landUse}” olarak belirtilmiştir.`);
   if (calculationBasis.netParcelArea != null) sentences.push(`Yapılaşma hesaplarında kadastro alanı yerine belgede doğrulanan ${formatArea(calculationBasis.netParcelArea)} net imar parseli alanı esas alınmıştır.`);
+  else if (calculationBasis.fallbackUsed && [fields.taks, fields.emsal].some((value) => value != null)) sentences.push(calculationBasis.fallbackReason);
   if (metrics.floors.value != null) sentences.push(`En fazla ${metrics.floors.value} kat bilgisi bulunmaktadır.`);
   if (metrics.footprint.value != null) sentences.push(`TAKS değerine göre ${calculationBasis.label.toLocaleLowerCase('tr-TR')} üzerinden binanın zeminde oturabileceği yaklaşık alan ${formatArea(metrics.footprint.value)} olarak hesaplanmıştır.`);
   if (metrics.construction.value != null) sentences.push(`Emsal değerine göre ${calculationBasis.label.toLocaleLowerCase('tr-TR')} üzerinden yaklaşık toplam emsale esas inşaat alanı ${formatArea(metrics.construction.value)} olabilir.`);
@@ -231,7 +242,7 @@ function possibilityNote(key, status, fields) {
   return 'Doğrulanan imar belgesinde yapılabilir olarak işaretlenmiş.';
 }
 
-function buildWarnings({ zoning, fields, missing, environment }) {
+function buildWarnings({ zoning, fields, missing, environment, calculationBasis }) {
   const warnings = [];
   if (zoning?.conflict) warnings.push({ level: 'danger', text: `Plan kaynaklarında çelişki var: ${(zoning.conflictFields || []).map(humanField).join(', ') || 'yapılaşma koşulları'}. Otomatik hesap yapılmadı.` });
   if (zoning?.status === 'user-evidence') {
@@ -248,6 +259,8 @@ function buildWarnings({ zoning, fields, missing, environment }) {
   if (fields.roadDedicationPossible === true) warnings.push({ level: 'warning', text: 'Parselde yol veya kamu alanı terki ihtimali işaretlenmiştir; net alan hesabı için imar uygulaması kontrol edilmelidir.' });
   if (fields.floodDataStatus === 'risk') warnings.push({ level: 'danger', text: 'Taşkın riski veya ilgili kurum kısıtı kaydedilmiştir; kurum görüşü alınmadan proje geliştirilmemelidir.' });
   if (fields.floodDataStatus === 'unknown') warnings.push({ level: 'info', text: 'Taşkın durumuyla ilgili yeterli doğrulanmış veri bulunamadı.' });
+  if (calculationBasis?.netParcelAreaRejected) warnings.push({ level: 'danger', text: 'Belgedeki net imar parseli alanı kadastro alanından belirgin biçimde büyük göründüğü için otomatik hesapta kullanılmadı; alanları yetkili idare belgesinden karşılaştırın.' });
+  else if (calculationBasis?.fallbackUsed && [fields.taks, fields.emsal].some((value) => value != null)) warnings.push({ level: 'info', text: 'Net imar parseli alanı doğrulanamadığından teorik hesaplarda kadastro parsel alanı kullanıldı; yol terki veya düzenleme sonrası sonuç değişebilir.' });
   for (const constraint of fields.constraints || []) warnings.push({ level: 'warning', text: constraint });
   if (missing.length) warnings.push({ level: 'info', text: `Eksik imar verileri nedeniyle bazı sonuçlar hesaplanmadı: ${missing.map(humanField).join(', ')}.` });
   if (zoning?.sourceScan?.exhausted) {
@@ -493,7 +506,15 @@ function normalizeSetbackConditions(value) {
       qualifier,
       value: distance,
       unit: 'm',
-      excerpt: clean(item.excerpt, 520)
+      excerpt: clean(item.excerpt, 520),
+      confidence: enumValue(item.confidence, ['high', 'medium', 'low']),
+      method: clean(item.method, 120),
+      sourceTitle: clean(item.sourceTitle, 280),
+      sourceUrl: safeHttps(item.sourceUrl),
+      documentDate: isoDate(item.documentDate),
+      retrievedAt: isoTimestamp(item.retrievedAt),
+      parserVersion: clean(item.parserVersion, 80),
+      parcelMatchStatus: enumValue(item.parcelMatchStatus, ['exact', 'unverified', 'mismatch'])
     };
     const key = `${type}|${qualifier?.toLocaleLowerCase('tr-TR') || ''}|${distance}`;
     if (seen.has(key)) continue;
@@ -592,6 +613,8 @@ function ratio(value, max) { if (isBlankNumeric(value)) return null; const numbe
 function booleanOrNull(value) { if (value === true || value === 'true' || value === 1 || value === '1') return true; if (value === false || value === 'false' || value === 0 || value === '0') return false; return null; }
 function enumValue(value, allowed) { const text = String(value ?? '').trim(); return allowed.includes(text) ? text : null; }
 function isoDate(value) { if (!value) return null; const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10); }
+function isoTimestamp(value) { if (!value) return null; const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date.toISOString(); }
+function safeHttps(value) { if (!value) return null; try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; } }
 function clean(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }
 function normalizeStringList(value, maxItems, maxLength) { const items = Array.isArray(value) ? value : String(value || '').split(/\r?\n|;/); return items.map((item) => clean(item, maxLength)).filter(Boolean).slice(0, maxItems); }
 function comparable(value) { if (value == null || value === '') return null; if (typeof value === 'number') return String(Math.round(value * 10000) / 10000); return String(value).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim(); }

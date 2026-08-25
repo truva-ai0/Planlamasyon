@@ -46,7 +46,8 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
 
   const registryRecord = findRegistryRecord(fastEnv.VERIFIED_ZONING_JSON, key, parcel, query);
   if (registryRecord) records.push(normalizeProviderRecord(registryRecord, {
-    id: 'verified-registry', title: 'Planlamasyon Doğrulanmış İmar Kaydı', provider: registryRecord.authority || 'Yetkili veri kaydı', trust: 'verified'
+    id: 'verified-registry', title: 'Planlamasyon Doğrulanmış İmar Kaydı', provider: registryRecord.authority || 'Yetkili veri kaydı', trust: 'verified',
+    sourceClass: 'authorized-adapter', accessMode: 'verified-registry', automationPolicy: 'authorized-automatic'
   }));
 
   const connectors = buildConnectors(fastEnv, parcel, query);
@@ -76,6 +77,9 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
       title: evidence.sourceTitle || evidence.planName || 'Kullanıcının eklediği resmî imar belgesi',
       provider: evidence.authority || 'Belgeyi düzenleyen idare',
       trust: 'user-evidence',
+      sourceClass: 'user-official-document',
+      accessMode: 'user-upload',
+      automationPolicy: 'user-confirmed-document',
       url: evidence.sourceUrl || null,
       note: evidence.parserVersion
         ? `Belge Planlamasyon ${evidence.parserVersion} okuma motoruyla tarandı ve kullanıcı tarafından kontrol edilerek onaylandı. Ada/parsel durumu: ${parcelMatchStatus || 'kullanıcı onayı'}. Ruhsat öncesinde yetkili idare teyidi gerekir.`
@@ -84,7 +88,11 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   }
 
   const providerDiscovery = await providerDiscoveryPromise;
-  const manualOnlyWithoutConnector = shouldUseManualOnlyStatus(providerDiscovery)
+  const primaryMunicipalService = providerDiscovery?.municipalService || providerDiscovery?.municipalServices?.[0] || null;
+  const primaryRequiresManualUse = providerDiscovery?.status === 'manual-only'
+    || primaryMunicipalService?.status === 'manual-only'
+    || primaryMunicipalService?.accessMode === 'manual-only';
+  const manualOnlyWithoutConnector = primaryRequiresManualUse
     && Number(providerDiscovery?.automaticConnectorCount || 0) === 0
     && !(providerDiscovery?.actions || []).some((item) => item?.automatedQueryAllowed === true || item?.accessMode === 'automatic-adapter');
   const openSourceScanPromise = manualOnlyWithoutConnector
@@ -145,7 +153,7 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   configuration.planAiEvidenceCount = Number(planAi?.evidenceCount || 0);
   configuration.planAiEvidenceBackedFieldCount = Number(planAi?.evidenceBackedFields?.length || 0);
   configuration.boundedAnalysis = true;
-  configuration.boundedAnalysisVersion = '3.5.0';
+  configuration.boundedAnalysisVersion = '3.6.0';
 
   const publicPlanRecord = buildPublicPlanMetadataRecord(planContext);
   if (publicPlanRecord) records.push(publicPlanRecord);
@@ -289,6 +297,10 @@ function buildPublicPlanMetadataRecord(planContext) {
       url: metadataSource?.url || 'https://tucbs.gov.tr/',
       kind: 'official-plan-metadata',
       trust: hasActionableFields(fields) ? 'verified' : 'public-information',
+      sourceClass: 'open-machine-readable',
+      accessMode: 'open-plan-metadata',
+      automationPolicy: 'read-only',
+      dataClaim: hasActionableFields(fields) ? 'read-and-location-matched' : 'metadata-only',
       note: hasActionableFields(fields)
         ? 'Kamuya açık resmî e-Plan/TUCBS katmanından yapılaşma öznitelikleri otomatik okundu.'
         : 'Plan adı, ölçek, işlem numarası, tarih veya yetkili idare gibi açık plan metaverileri kullanıldı. Bu kayıt TAKS, emsal, kat veya ruhsat hakkı değildir.',
@@ -301,35 +313,45 @@ function buildPublicPlanMetadataRecord(planContext) {
 
 function buildConnectors(env, parcel, query) {
   const connectors = [];
-  if (env.PLANLAMASYON_ZONING_API_URL) connectors.push({
+  const zoningProviderUrl = safeConnectorUrl(env.PLANLAMASYON_ZONING_API_URL, env);
+  if (zoningProviderUrl) connectors.push({
     id: 'planlamasyon-zoning-provider',
-    url: env.PLANLAMASYON_ZONING_API_URL,
+    url: zoningProviderUrl,
     token: env.PLANLAMASYON_ZONING_API_TOKEN,
     title: 'Planlamasyon İmar Veri Sağlayıcısı',
     provider: 'Yapılandırılmış imar servisi',
-    trust: 'verified'
+    trust: 'verified',
+    sourceClass: 'authorized-adapter', accessMode: 'automatic-adapter', automationPolicy: 'authorized-automatic'
   });
-  if (env.EPLAN_ADAPTER_URL) connectors.push({
+  const eplanAdapterUrl = safeConnectorUrl(env.EPLAN_ADAPTER_URL, env);
+  if (eplanAdapterUrl) connectors.push({
     id: 'eplan-adapter',
-    url: env.EPLAN_ADAPTER_URL,
+    url: eplanAdapterUrl,
     token: env.EPLAN_ADAPTER_TOKEN,
     title: 'e-Plan Entegrasyon Adaptörü',
     provider: 'e-Plan / yetkili adaptör',
-    trust: 'verified'
+    trust: 'verified',
+    sourceClass: 'authorized-adapter', accessMode: 'automatic-adapter', automationPolicy: 'authorized-automatic'
   });
 
   const configured = parseJson(env.MUNICIPALITY_CONNECTORS_JSON, []);
   const municipalityConnectors = Array.isArray(configured) ? configured : Array.isArray(configured?.connectors) ? configured.connectors : [];
   for (const connector of municipalityConnectors) {
     if (!connector?.url) continue;
+    if (connector.authorized !== true || connector.automatedQueryAllowed !== true) continue;
     if (!matchesLocation(connector, parcel, query)) continue;
+    const connectorUrl = safeConnectorUrl(connector.url, env);
+    if (!connectorUrl) continue;
     connectors.push({
       id: clean(connector.id, 120) || `municipality-${connectors.length + 1}`,
-      url: connector.url,
+      url: connectorUrl,
       token: connector.tokenEnv ? env[connector.tokenEnv] : connector.token,
       title: clean(connector.title, 240) || 'Belediye İmar Veri Servisi',
       provider: clean(connector.provider, 240) || clean(connector.authority, 240) || 'İlgili belediye',
       trust: 'verified',
+      sourceClass: 'authorized-adapter',
+      accessMode: 'automatic-adapter',
+      automationPolicy: 'authorized-automatic',
       method: String(connector.method || 'POST').toUpperCase(),
       priority: Number.isFinite(Number(connector.priority)) ? Number(connector.priority) : 0
     });
@@ -339,15 +361,13 @@ function buildConnectors(env, parcel, query) {
 
 async function fetchConnector(connector, payload, fetchImpl, env) {
   if (typeof fetchImpl !== 'function') throw new Error('Fetch desteği bulunmuyor.');
-  const url = allowedConnectorUrl(connector.url);
+  const url = allowedConnectorUrl(connector.url, env);
   const timeoutMs = clampInt(env.ZONING_CONNECTOR_TIMEOUT_MS, 2000, 45000, 12000);
   const cacheKey = `${connector.id}:${parcelKey(payload.parcel, payload.query)}`;
   const cacheDisabled = String(env.ZONING_CONNECTOR_CACHE_DISABLED ?? 'false').toLowerCase() === 'true';
   const cached = cacheDisabled ? null : CACHE.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const method = connector.method === 'GET' ? 'GET' : 'POST';
     const requestUrl = new URL(url);
@@ -360,7 +380,7 @@ async function fetchConnector(connector, payload, fetchImpl, env) {
       requestUrl.searchParams.set('block', p.block || payload.query?.block || '');
       requestUrl.searchParams.set('parcel', p.parcel || payload.query?.parcel || '');
     }
-    const response = await fetchImpl(requestUrl, {
+    const response = await fetchConnectorRequest(requestUrl, {
       method,
       headers: {
         Accept: 'application/json',
@@ -371,12 +391,14 @@ async function fetchConnector(connector, payload, fetchImpl, env) {
         parcel: sanitizeParcelPayload(payload.parcel),
         query: sanitizeQuery(payload.query),
         requestedFields: ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'setbacks', 'setbackConditions', 'planNotes', 'allowances', 'constraints']
-      }) : undefined,
-      signal: controller.signal
-    });
+      }) : undefined
+    }, timeoutMs, fetchImpl);
     if (response.status === 404 || response.status === 204) return null;
     if (!response.ok) throw new Error(`${connector.title} ${response.status} yanıtı verdi.`);
-    const json = await response.json();
+    const responseText = await response.text();
+    if (responseText.length > 2_000_000) throw new Error(`${connector.title} güvenli yanıt sınırını aştı.`);
+    let json;
+    try { json = JSON.parse(responseText); } catch { throw new Error(`${connector.title} geçerli JSON döndürmedi.`); }
     const data = json?.data ?? json?.result ?? json;
     if (!data || data.found === false) return null;
     const record = normalizeProviderRecord(data, connector);
@@ -386,10 +408,8 @@ async function fetchConnector(connector, payload, fetchImpl, env) {
     }
     return record;
   } catch (error) {
-    if (error?.name === 'AbortError') throw new Error(`${connector.title} zaman aşımına uğradı.`);
+    if (error?.name === 'AbortError' || /zaman aşım/i.test(error?.message || '')) throw new Error(`${connector.title} zaman aşımına uğradı.`);
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -405,14 +425,23 @@ function normalizeProviderRecord(input, sourceDefaults) {
     kind: 'zoning',
     trust: sourceDefaults.trust,
     note: clean(sourceInput.note || input?.note || sourceDefaults.note, 1000),
-    documentDate: clean(input?.documentDate || input?.planDate, 40),
-    documentName: clean(input?.documentName, 260),
-    documentHash: clean(input?.documentHash, 80),
-    parserVersion: clean(input?.parserVersion, 40),
-    extractionConfidence: clean(input?.extractionConfidence, 40),
-    parcelMatchStatus: clean(input?.parcelMatchStatus, 40),
-    fieldEvidence: input?.fieldEvidence && typeof input.fieldEvidence === 'object' ? input.fieldEvidence : {},
-    retrievedAt: new Date().toISOString()
+    documentDate: clean(input?.documentDate || sourceInput.documentDate || input?.planDate, 40),
+    documentName: clean(input?.documentName || sourceInput.documentName, 260),
+    documentHash: clean(input?.documentHash || sourceInput.documentHash, 80),
+    parserVersion: clean(input?.parserVersion || sourceInput.parserVersion, 40),
+    extractionConfidence: clean(input?.extractionConfidence || sourceInput.extractionConfidence || sourceInput.confidence, 40),
+    parcelMatchStatus: clean(input?.parcelMatchStatus || sourceInput.parcelMatchStatus, 40),
+    fieldEvidence: input?.fieldEvidence && typeof input.fieldEvidence === 'object'
+      ? input.fieldEvidence
+      : sourceInput.fieldEvidence && typeof sourceInput.fieldEvidence === 'object' ? sourceInput.fieldEvidence : {},
+    retrievedAt: clean(input?.retrievedAt || sourceInput.retrievedAt, 40) || new Date().toISOString(),
+    verifiedAt: clean(input?.verifiedAt || sourceInput.verifiedAt, 40),
+    sourceClass: clean(sourceDefaults.sourceClass || sourceInput.sourceClass, 80),
+    accessMode: clean(sourceDefaults.accessMode || sourceInput.accessMode, 80),
+    automationPolicy: clean(sourceDefaults.automationPolicy || sourceInput.automationPolicy, 80),
+    dataClaim: clean(sourceInput.dataClaim || sourceDefaults.dataClaim, 80),
+    retrievalMode: clean(sourceInput.retrievalMode || input?.retrievalMode, 80),
+    scanVersion: clean(sourceInput.scanVersion || input?.scanVersion, 40)
   };
   return { fields, source, message: clean(input?.message, 600) };
 }
@@ -475,7 +504,11 @@ function manualOnlySourceScan(providerDiscovery = {}) {
     provider: item.provider,
     url: item.url,
     status: 'manual-only',
-    message: item.note || 'Bu resmî portal yalnız kullanıcı tarafından açılır; otomatik sorgu yapılmadı.'
+    message: item.note || 'Bu resmî portal yalnız kullanıcı tarafından açılır; otomatik sorgu yapılmadı.',
+    sourceClass: item.sourceClass || 'public-manual',
+    accessMode: item.accessMode || 'manual-only',
+    automatedQueryAllowed: false,
+    dataClaim: 'not-read'
   }));
   const message = providerDiscovery?.message || 'Resmî imar portalı manuel kullanım gerektiriyor; otomatik kaynak taraması yapılmadı.';
   return {
@@ -677,7 +710,16 @@ function publicFieldSource(source = {}, field = '') {
     excerpt: clean(evidence?.excerpt || evidence?.quote, 520),
     method: clean(evidence?.method, 80),
     parserVersion: clean(source.parserVersion, 40),
-    parcelMatchStatus: clean(source.parcelMatchStatus, 40)
+    parcelMatchStatus: clean(source.parcelMatchStatus, 40),
+    documentName: clean(source.documentName, 260),
+    documentHash: clean(source.documentHash, 80),
+    verifiedAt: clean(source.verifiedAt, 40),
+    sourceClass: clean(source.sourceClass, 80),
+    accessMode: clean(source.accessMode, 80),
+    automationPolicy: clean(source.automationPolicy, 80),
+    dataClaim: clean(source.dataClaim, 80),
+    retrievalMode: clean(source.retrievalMode, 80),
+    scanVersion: clean(source.scanVersion, 40)
   };
 }
 
@@ -690,11 +732,11 @@ function officialFallbackSources(parcel, query, providerDiscovery) {
   return [
     {
       id: 'eplan-national', title: 'e-Plan Yürürlükteki Planlar ve İmar Durumu', provider: 'Çevre, Şehircilik ve İklim Değişikliği Bakanlığı',
-      url: 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html', kind: 'national-portal', trust: 'lookup-required', note: `${location || 'Parsel'} için yürürlükteki plan, plan notu ve imar durumu bu portalda kontrol edilmelidir.`
+      url: 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html', kind: 'national-portal', trust: 'lookup-required', sourceClass: 'public-manual', accessMode: 'public-portal', automationPolicy: 'routing-only', dataClaim: 'not-read', note: `${location || 'Parsel'} için yürürlükteki plan, plan notu ve imar durumu bu portalda kontrol edilmelidir.`
     },
     {
       id: 'municipality-official-search', title: 'Belediye İmar Durumu Hizmetini Ara', provider: p.district ? `${p.district} Belediyesi / yetkili idare` : 'Yetkili yerel idare',
-      url: search.toString(), kind: 'municipality-portal', trust: 'lookup-required', note: 'İlgili belediyenin resmî e-Devlet imar hizmeti bu bağlantıdan aranır.'
+      url: search.toString(), kind: 'municipality-portal', trust: 'lookup-required', sourceClass: 'authenticated-official', accessMode: 'official-search', automationPolicy: 'routing-only', dataClaim: 'not-read', note: 'İlgili belediyenin resmî e-Devlet imar hizmeti bu bağlantıdan aranır; hizmet sonucu otomatik okunmuş sayılmaz.'
     }
   ];
 }
@@ -741,28 +783,78 @@ function sanitizeQuery(query = {}) {
   return Object.fromEntries(Object.entries(query).slice(0, 20).map(([key, value]) => [clean(key, 60), clean(value, 200)]).filter(([key]) => key));
 }
 
-function allowedConnectorUrl(value) {
+async function fetchConnectorRequest(url, options, timeoutMs, fetchImpl) {
+  const method = String(options?.method || 'GET').toUpperCase();
+  const retryCount = method === 'GET' || method === 'HEAD' ? 1 : 0;
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    try {
+      const response = await fetchImpl(url, { ...options, signal: controller.signal });
+      if (attempt < retryCount && (response.status === 429 || response.status >= 500) && deadline - Date.now() > 50) continue;
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (error?.name === 'AbortError' || attempt >= retryCount || deadline - Date.now() <= 50) break;
+    } finally { clearTimeout(timer); }
+  }
+  if (lastError?.name === 'AbortError' || Date.now() >= deadline) throw new Error('İmar veri servisi zaman aşımına uğradı.');
+  throw lastError || new Error('İmar veri servisine güvenli bağlantı kurulamadı.');
+}
+
+function safeConnectorUrl(value, env = {}) {
+  if (!value) return null;
+  try { return allowedConnectorUrl(value, env); } catch { return null; }
+}
+
+function connectorHostAllowed(hostname, rawAllowlist) {
+  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  if (host === 'gov.tr' || host === 'bel.tr' || host.endsWith('.gov.tr') || host.endsWith('.bel.tr')) return true;
+  const allowed = String(rawAllowlist || '').split(/[\s,;]+/).map((item) => item.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean);
+  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+
+function allowedConnectorUrl(value, env = {}) {
   const url = new URL(String(value));
-  if (url.protocol !== 'https:') throw new Error('İmar bağlantısı HTTPS olmalıdır.');
+  if (url.protocol !== 'https:' || url.username || url.password || !['', '443'].includes(url.port)) throw new Error('İmar bağlantısı güvenli HTTPS adresi olmalıdır.');
   if (isPrivateHost(url.hostname)) throw new Error('Özel ağ adresine imar bağlantısı yapılamaz.');
+  if (!connectorHostAllowed(url.hostname, env.ZONING_CONNECTOR_ALLOWED_HOSTS || env.MUNICIPALITY_CONNECTOR_ALLOWED_HOSTS)) throw new Error('İmar bağlantısının alan adı izin listesinde değildir.');
   return url.toString();
 }
 
 function isPrivateHost(hostname) {
-  const host = String(hostname).toLowerCase();
-  if (host === 'localhost' || host.endsWith('.local')) return true;
-  if (/^(127\.|10\.|192\.168\.|169\.254\.)/.test(host)) return true;
-  const match = host.match(/^172\.(\d+)\./);
-  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  if (['::', '::1', '0.0.0.0', 'metadata.google.internal', 'instance-data'].includes(host)) return true;
+  if (/^(?:fc|fd)[0-9a-f]{2}:|^fe[89ab][0-9a-f]:|^ff[0-9a-f]{2}:/i.test(host)) return true;
+  if (host.startsWith('::ffff:')) return true;
+  const parts = host.split('.');
+  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
+    const [a, b] = parts.map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && [18, 19].includes(b));
+  }
+  return false;
 }
 
 function safeUrl(value) {
   if (!value) return null;
-  try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; }
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' && !url.username && !url.password && ['', '443'].includes(url.port) && !isPrivateHost(url.hostname) ? url.toString() : null;
+  } catch { return null; }
 }
 function parseJson(value, fallback) { if (!value) return fallback; try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return fallback; } }
 function normalize(value) { return String(value || '').toLocaleLowerCase('tr-TR').replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9*]/g, ''); }
 function clean(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }
 function clampInt(value, min, max, fallback) { const number = Number(value); return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.trunc(number))) : fallback; }
-function safeMessage(error) { return clean(error?.message || error, 400) || 'Bilinmeyen bağlantı hatası'; }
+function safeMessage(error) {
+  const raw = String(error?.message || error || '').replace(/https?:\/\/[^\s)]+/gi, '[resmî kaynak]').replace(/Bearer\s+\S+/gi, 'Bearer [gizlendi]');
+  return clean(raw, 400) || 'Resmî kaynağa güvenli bağlantı kurulamadı.';
+}
 function trimCache() { while (CACHE.size > 500) CACHE.delete(CACHE.keys().next().value); }

@@ -196,7 +196,7 @@ async function fetchOfficialDocument(inputUrl) {
       redirect: 'follow',
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.3',
-        'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
+        'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
       },
       signal: controller.signal
     });

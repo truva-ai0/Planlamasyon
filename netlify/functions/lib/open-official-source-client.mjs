@@ -1,7 +1,16 @@
 import { geometryCenter } from './geo.mjs';
 import { normalizeZoningFields } from './analysis-core.mjs';
+import {
+  describeSourceFreshness,
+  fetchOfficialResource,
+  hostMatchesAllowlist,
+  isOfficialTurkishHost,
+  readResponseTextLimited,
+  safePublicHttpsUrl,
+  validatePublicHttpsUrl
+} from './official-source-security.mjs';
 
-export const OPEN_OFFICIAL_SOURCE_VERSION = '3.6.0';
+export const OPEN_OFFICIAL_SOURCE_VERSION = '3.7.0';
 
 const CACHE = globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ = CACHE;
@@ -138,7 +147,9 @@ export async function discoverOpenOfficialZoning({
           accessMode: candidate.accessMode || null,
           automatedQueryAllowed: candidate.automatedQueryAllowed === true,
           termsUrl: candidate.termsUrl || null,
-          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
+          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+          dataClaim: candidate.dataClaim || 'not-read',
+          freshness: describeSourceFreshness(candidate)
         });
         continue;
       }
@@ -158,7 +169,9 @@ export async function discoverOpenOfficialZoning({
           accessMode: candidate.accessMode || null,
           automatedQueryAllowed: candidate.automatedQueryAllowed === true,
           termsUrl: candidate.termsUrl || null,
-          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
+          sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+          dataClaim: candidate.dataClaim || 'not-read',
+          freshness: describeSourceFreshness(candidate)
         });
         diagnostics.push({ connector: candidate.id, message });
         continue;
@@ -178,7 +191,9 @@ export async function discoverOpenOfficialZoning({
         accessMode: candidate.accessMode || null,
         automatedQueryAllowed: candidate.automatedQueryAllowed === true,
         termsUrl: candidate.termsUrl || null,
-        sourceClass: candidate.sourceClass || classifyCandidateSource(candidate)
+        sourceClass: candidate.sourceClass || classifyCandidateSource(candidate),
+        dataClaim: result.source?.dataClaim || candidate.dataClaim || 'not-read',
+        freshness: result.source?.freshness || describeSourceFreshness(candidate)
       });
       if (result.source) sources.push(result.source);
       if (Array.isArray(result.aiEvidence)) aiEvidence.push(...result.aiEvidence);
@@ -276,12 +291,16 @@ function buildCandidateQueue({ providerDiscovery, env, location }) {
       accessMode,
       automatedQueryAllowed: action.automatedQueryAllowed === true,
       configured: action.configured === true || kind === 'configured-adapter',
-      authorized: action.authorized === true || action.automatedQueryAllowed === true,
+      authorized: action.authorized === true,
       termsUrl: safePublicUrl(action.termsUrl),
       readOnlyResult: action.readOnlyResult === true || accessMode === 'read-only-result',
+      machineReadableCandidate: action.machineReadableCandidate === true,
       sourceClass: clean(action.sourceClass, 80) || classifyCandidateSource(action),
       verifiedAt: clean(action.verifiedAt, 40),
-      documentDate: clean(action.documentDate, 40)
+      documentDate: clean(action.documentDate, 40),
+      retrievedAt: clean(action.retrievedAt, 60),
+      status: clean(action.status, 80),
+      dataClaim: clean(action.dataClaim, 100)
     });
   }
 
@@ -297,35 +316,41 @@ function parseConfiguredSources(raw, location, env = {}) {
     .map((item, index) => {
       const endpoint = safeAutomaticSourceUrl(item.endpoint || item.url, env.OPEN_OFFICIAL_SOURCE_ALLOWED_HOSTS);
       if (!endpoint) return null;
+      const kind = String(item.kind || inferKind(endpoint, item)).toLowerCase();
+      const authorized = item.authorized === true && item.automatedQueryAllowed === true;
+      const readOnlyResult = item.readOnlyResult === true && item.accessMode === 'read-only-result';
+      const portalManual = kind === 'portal' && !authorized && !readOnlyResult;
       return {
         id: cleanId(item.id || `configured-open-${index + 1}`),
         title: clean(item.title, 240) || 'Yapılandırılmış açık resmî kaynak',
         provider: clean(item.provider || item.authority, 240) || 'Yetkili idare',
-        kind: String(item.kind || inferKind(endpoint, item)).toLowerCase(),
+        kind,
         endpoint,
         url: endpoint,
         layers: normalizeLayers(item.layers || item.layer || item.typeNames),
         layerNameKeywords: normalizeLayers(item.layerNameKeywords),
         official: true,
         priority: Number.isFinite(Number(item.priority)) ? Number(item.priority) : 90,
-        accessMode: clean(item.accessMode, 80) || null,
-        automatedQueryAllowed: item.automatedQueryAllowed === true,
+        accessMode: portalManual ? 'manual-only' : clean(item.accessMode, 80) || null,
+        automatedQueryAllowed: authorized,
         configured: true,
-        authorized: item.authorized === true || item.automatedQueryAllowed === true,
+        authorized: item.authorized === true,
         termsUrl: safePublicUrl(item.termsUrl),
-        readOnlyResult: item.readOnlyResult === true || item.accessMode === 'read-only-result',
-        sourceClass: item.authorized === true && item.automatedQueryAllowed === true ? 'authorized-adapter' : 'open-machine-readable',
+        readOnlyResult,
+        machineReadableCandidate: kind !== 'portal' || readOnlyResult || authorized,
+        sourceClass: authorized ? 'authorized-adapter' : portalManual ? 'public-manual' : 'open-machine-readable',
         verifiedAt: clean(item.verifiedAt, 40),
-        documentDate: clean(item.documentDate, 40)
+        documentDate: clean(item.documentDate, 40),
+        retrievedAt: clean(item.retrievedAt, 60),
+        status: portalManual ? 'manual-only' : 'configured',
+        dataClaim: portalManual ? 'not-read' : 'eligible-after-parcel-match'
       };
     })
     .filter(Boolean);
 }
 
 async function queryCandidate(candidate, context) {
-  if (['manual-only', 'official-login-service', 'official-search', 'configured-not-authorized'].includes(candidate.accessMode)
-      || candidate.sourceClass === 'authenticated-official'
-      || candidate.automatedQueryAllowed === false && candidate.status === 'manual-only') {
+  if (!candidateCanBeReadAutomatically(candidate)) {
     return manualOnlyResult(candidate);
   }
   switch (candidate.kind) {
@@ -447,13 +472,14 @@ async function discoverPortal(candidate, { timeoutMs, fetchImpl, parcel, query }
     throw error;
   }
   if (!response.ok) throw httpStatusError(`${candidate.title} ${response.status} yanıtı verdi.`, response.status);
-  const text = await response.text();
+  const text = await readResponseTextLimited(response, 2_000_000);
+  const responseUrl = response.officialFinalUrl || response.url || url;
 
   // Doğrudan açılan, sorgudaki ada/parseli açıkça içeren sonuç sayfası salt-okunur GET
   // olarak işlenebilir. Bu yol hiçbir form veya portal işlemi tetiklemez.
   const directResult = parsePortalResultHtml({
     candidate,
-    url: response.url || url,
+    url: responseUrl,
     html: text,
     expected: expectedParcelNumbers(parcel, query),
     retrievalMode: 'read-only-get'
@@ -463,20 +489,20 @@ async function discoverPortal(candidate, { timeoutMs, fetchImpl, parcel, query }
   // Belediye e-imar formu yalnız açıkça yetkilendirilmiş, yapılandırılmış bir
   // aday olduğunda POST edilir. Sonuç yine aynı ada + parseli açıkça göstermelidir.
   const queryResult = await queryMunicipalPortalForm({
-    candidate, baseUrl: url, html: text, parcel, query, fetchImpl, cookieHeader: responseCookieHeader(response),
+    candidate, baseUrl: responseUrl, html: text, parcel, query, fetchImpl, cookieHeader: responseCookieHeader(response),
     timeoutMs: Math.max(650, timeoutMs - (Date.now() - startedAt))
   }).catch((error) => ({ status: 'error', message: safeMessage(error), aiEvidence: [] }));
   if (queryResult?.status === 'found' || queryResult?.status === 'metadata-only') return queryResult;
 
-  const serviceItems = [...extractOfficialServiceUrls(text, url)];
+  const serviceItems = [...extractOfficialServiceUrls(text, responseUrl)];
   const remainingForScripts = Math.max(0, timeoutMs - (Date.now() - startedAt));
-  const scriptUrls = remainingForScripts >= 700 ? extractFirstPartyScriptUrls(text, url).slice(0, 2) : [];
+  const scriptUrls = remainingForScripts >= 700 ? extractFirstPartyScriptUrls(text, responseUrl).slice(0, 2) : [];
   if (scriptUrls.length) {
     const scriptResults = await Promise.allSettled(scriptUrls.map(async (scriptUrl) => {
       const remaining = Math.max(500, timeoutMs - (Date.now() - startedAt));
       const scriptResponse = await fetchWithTimeout(scriptUrl, { headers: standardHeaders('application/javascript,text/javascript,*/*;q=0.2') }, Math.max(500, Math.min(remaining, 1200)), fetchImpl);
       if (!scriptResponse.ok) return [];
-      const scriptText = (await scriptResponse.text()).slice(0, 2_500_000);
+      const scriptText = await readResponseTextLimited(scriptResponse, 2_500_000);
       return extractOfficialServiceUrls(scriptText, scriptUrl);
     }));
     for (const item of scriptResults) if (item.status === 'fulfilled') serviceItems.push(...item.value);
@@ -547,10 +573,10 @@ async function queryMunicipalPortalForm({ candidate, baseUrl, html, parcel, quer
       const response = await fetchWithTimeout(requestUrl, init, Math.max(450, Math.min(remaining, 1800)), fetchImpl);
       if ([401,403].includes(response.status)) { lastMessage = 'Resmî imar sonucu oturum/yetki istedi.'; continue; }
       if (!response.ok) { lastMessage = `Resmî imar sorgusu ${response.status} yanıtı verdi.`; continue; }
-      const resultHtml = await response.text();
+      const resultHtml = await readResponseTextLimited(response, 2_000_000);
       const parsedResult = parsePortalResultHtml({
         candidate,
-        url: response.url || requestUrl,
+        url: response.officialFinalUrl || response.url || requestUrl,
         html: resultHtml,
         expected,
         retrievalMode: method === 'POST' ? 'authorized-form-post' : 'form-get'
@@ -585,6 +611,11 @@ function parsePortalResultHtml({ candidate, url, html, expected, retrievalMode }
     dataClaim: 'read-and-parcel-matched',
     documentDate: candidate.documentDate || fields.planDate || null,
     verifiedAt: candidate.verifiedAt || null,
+    freshness: describeSourceFreshness({
+      documentDate: candidate.documentDate || fields.planDate || null,
+      verifiedAt: candidate.verifiedAt || null,
+      retrievedAt: new Date().toISOString()
+    }),
     extractionConfidence: 'medium',
     fieldEvidence: buildOpenFieldEvidence(fields, plainText, retrievalMode)
   };
@@ -711,7 +742,14 @@ function hasExactParcelReference(text, expected) {
 function makePortalAiEvidence(candidate, url, text, expected) {
   const cleaned = cleanEvidenceText(text, 26000);
   if (!cleaned || !hasExactParcelReference(cleaned, expected)) return null;
-  return { id: `${candidate.id}-portal-evidence`, title: candidate.title, provider: candidate.provider, url, kind: 'official-portal-result', parcelMatch: 'exact', text: cleaned, retrievedAt: new Date().toISOString() };
+  const retrievedAt = new Date().toISOString();
+  return {
+    id: `${candidate.id}-portal-evidence`, title: candidate.title, provider: candidate.provider,
+    url, kind: 'official-portal-result', parcelMatch: 'exact', text: cleaned, retrievedAt,
+    documentDate: candidate.documentDate || null,
+    dataClaim: 'read-and-parcel-matched',
+    freshness: describeSourceFreshness({ documentDate: candidate.documentDate, verifiedAt: candidate.verifiedAt, retrievedAt })
+  };
 }
 
 function htmlToEvidenceText(html, maxChars = 26000) {
@@ -758,7 +796,7 @@ function portalHeaders(referer, cookieHeader = '') {
   return {
     Accept: 'text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.2',
     'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-    'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)',
+    'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)',
     Referer: referer,
     Origin: url.origin,
     ...(cookieHeader ? { Cookie: cookieHeader } : {})
@@ -798,6 +836,11 @@ function buildResultFromAttributes(candidate, attributeRows, { note, detail } = 
     dataClaim: 'read-and-location-matched',
     documentDate: candidate.documentDate || fields.planDate || null,
     verifiedAt: candidate.verifiedAt || null,
+    freshness: describeSourceFreshness({
+      documentDate: candidate.documentDate || fields.planDate || null,
+      verifiedAt: candidate.verifiedAt || null,
+      retrievedAt: new Date().toISOString()
+    }),
     extractionConfidence: 'high',
     fieldEvidence: buildStructuredFieldEvidence(fields, candidate.kind)
   };
@@ -864,7 +907,7 @@ export function extractOfficialServiceUrls(html, baseUrl) {
       const value = match[1] || match[0];
       try {
         const url = new URL(value, baseUrl);
-        if (!isAllowedPublicUrl(url) || !isOfficialAutomationHost(url.hostname)) continue;
+        if (!isAllowedPublicUrl(url) || !isOfficialTurkishHost(url.hostname)) continue;
         const kind = inferKind(url.toString(), {});
         if (!['wms', 'wfs', 'arcgis', 'json'].includes(kind)) continue;
         raw.add(url.toString());
@@ -908,7 +951,7 @@ async function discoverWmsLayers(endpoint, timeoutMs, fetchImpl, keywords = []) 
   const url = withQuery(endpoint, { SERVICE: 'WMS', REQUEST: 'GetCapabilities', VERSION: '1.3.0' });
   const response = await fetchWithTimeout(url, { headers: standardHeaders('application/xml,text/xml,*/*') }, timeoutMs, fetchImpl);
   if (!response.ok) throw httpStatusError(`WMS GetCapabilities ${response.status} yanıtı verdi.`, response.status);
-  const xml = await response.text();
+  const xml = await readResponseTextLimited(response, 3_000_000);
   return chooseLayerNames([...xml.matchAll(/<Name>([^<]+)<\/Name>/gi)].map((match) => decodeEntities(match[1])), keywords);
 }
 
@@ -916,7 +959,7 @@ async function discoverWfsLayers(endpoint, timeoutMs, fetchImpl, keywords = []) 
   const url = withQuery(endpoint, { SERVICE: 'WFS', REQUEST: 'GetCapabilities', VERSION: '2.0.0' });
   const response = await fetchWithTimeout(url, { headers: standardHeaders('application/xml,text/xml,*/*') }, timeoutMs, fetchImpl);
   if (!response.ok) throw httpStatusError(`WFS GetCapabilities ${response.status} yanıtı verdi.`, response.status);
-  const xml = await response.text();
+  const xml = await readResponseTextLimited(response, 3_000_000);
   return chooseLayerNames([...xml.matchAll(/<(?:wfs:)?Name>([^<]+)<\/(?:wfs:)?Name>/gi)].map((match) => decodeEntities(match[1])), keywords);
 }
 
@@ -941,7 +984,7 @@ async function fetchWmsFeatureInfo(endpoint, layer, center, timeoutMs, fetchImpl
     try {
       const response = await fetchWithTimeout(url, { headers: standardHeaders(`${infoFormat},application/vnd.ogc.gml;q=0.9,*/*;q=0.1`) }, timeoutMs, fetchImpl);
       if (!response.ok) throw httpStatusError(`WMS katmanı ${response.status} yanıtı verdi.`, response.status);
-      const text = await response.text();
+      const text = await readResponseTextLimited(response, 2_000_000);
       const rows = parseFeaturePayload(text, response.headers?.get?.('content-type') || infoFormat);
       if (rows.length) return mergeAttributeRows(rows);
       return null;
@@ -970,7 +1013,7 @@ async function fetchWfsFeature(endpoint, layer, center, timeoutMs, fetchImpl) {
     try {
       const response = await fetchWithTimeout(url, { headers: standardHeaders('application/json,application/gml+xml,text/xml,*/*') }, timeoutMs, fetchImpl);
       if (!response.ok) throw httpStatusError(`WFS katmanı ${response.status} yanıtı verdi.`, response.status);
-      const text = await response.text();
+      const text = await readResponseTextLimited(response, 3_000_000);
       const rows = parseFeaturePayload(text, response.headers?.get?.('content-type') || '');
       if (rows.length) return mergeAttributeRows(rows);
       return null;
@@ -1139,7 +1182,10 @@ function result(status, message, candidate) {
       accessMode: candidate.accessMode || null,
       automationPolicy: 'routing-only',
       dataClaim: 'no-value-read',
-      verifiedAt: candidate.verifiedAt || null
+      verifiedAt: candidate.verifiedAt || null,
+      documentDate: candidate.documentDate || null,
+      retrievedAt: candidate.retrievedAt || null,
+      freshness: describeSourceFreshness(candidate)
     },
     discovered: [],
     aiEvidence: []
@@ -1150,7 +1196,7 @@ function manualOnlyResult(candidate) {
   const authenticated = candidate.sourceClass === 'authenticated-official' || ['official-login-service', 'official-search'].includes(candidate.accessMode);
   const message = authenticated
     ? 'Bu resmî hizmet kullanıcı oturumu veya portal işlemi gerektirir; Planlamasyon giriş yapmadı ve sonucu otomatik okunmuş saymadı.'
-    : 'Bu resmî portal kullanım koşulları gereği yalnızca kullanıcı tarafından elle sorgulanır; otomatik form işlemi yapılmadı.';
+    : 'Bu resmî portal açıkça yetkilendirilmiş salt-okunur kaynak veya adaptör olmadığı için yalnızca kullanıcı tarafından elle sorgulanır; otomatik okuma ve form işlemi yapılmadı.';
   return {
     status: 'manual-only',
     message,
@@ -1171,7 +1217,10 @@ function manualOnlyResult(candidate) {
       automationPolicy: 'manual-only',
       dataClaim: 'not-read',
       userActionRequired: true,
-      verifiedAt: candidate.verifiedAt || null
+      verifiedAt: candidate.verifiedAt || null,
+      documentDate: candidate.documentDate || null,
+      retrievedAt: candidate.retrievedAt || null,
+      freshness: describeSourceFreshness(candidate)
     },
     discovered: [],
     aiEvidence: []
@@ -1326,33 +1375,23 @@ function candidateKey(candidate) { return `${candidate?.kind || ''}:${candidate?
 async function fetchJson(url, timeoutMs, fetchImpl, title) {
   const response = await fetchWithTimeout(url, { headers: standardHeaders('application/json,*/*;q=0.2') }, timeoutMs, fetchImpl);
   if (!response.ok) throw httpStatusError(`${title || 'Resmî veri servisi'} ${response.status} yanıtı verdi.`, response.status);
-  const text = await response.text();
+  const text = await readResponseTextLimited(response, 5_000_000);
   try { return JSON.parse(text); } catch { throw new Error(`${title || 'Resmî veri servisi'} geçerli JSON döndürmedi.`); }
 }
 async function fetchWithTimeout(url, options, timeoutMs, fetchImpl) {
   const method = String(options?.method || 'GET').toUpperCase();
-  const retryCount = method === 'GET' || method === 'HEAD' ? 1 : 0;
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), remaining);
-    try {
-      const response = await fetchImpl(url, { ...options, signal: controller.signal });
-      if (attempt < retryCount && (response.status === 429 || response.status >= 500) && deadline - Date.now() > 50) continue;
-      return response;
-    } catch (error) {
-      lastError = error;
-      if (error?.name === 'AbortError' || attempt >= retryCount || deadline - Date.now() <= 50) break;
-    } finally { clearTimeout(timer); }
-  }
-  if (lastError?.name === 'AbortError' || Date.now() >= deadline) throw new Error('Resmî kaynak zaman aşımına uğradı.');
-  throw lastError || new Error('Resmî kaynağa güvenli bağlantı kurulamadı.');
+  return fetchOfficialResource(url, options, {
+    timeoutMs,
+    fetchImpl,
+    retryCount: method === 'GET' || method === 'HEAD' ? 1 : 0,
+    maxRedirects: 2,
+    allowPost: method === 'POST',
+    allowPostRedirects: method === 'POST',
+    maxResponseBytes: 5_000_000
+  });
 }
 function standardHeaders(accept) {
-  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)' };
+  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)' };
 }
 function withQuery(value, params) {
   const url = new URL(allowedPublicUrl(value));
@@ -1360,51 +1399,39 @@ function withQuery(value, params) {
   return url.toString();
 }
 function allowedPublicUrl(value) {
-  const url = new URL(String(value));
-  if (!isAllowedPublicUrl(url)) throw new Error('Açık resmî kaynak adresi güvenli değil.');
-  return url.toString();
+  return validatePublicHttpsUrl(value);
 }
 function safePublicUrl(value) { try { return allowedPublicUrl(value); } catch { return null; } }
 function safeAutomaticSourceUrl(value, rawAllowlist) {
   try {
     const url = new URL(allowedPublicUrl(value));
-    return isOfficialAutomationHost(url.hostname) || hostMatchesAllowlist(url.hostname, rawAllowlist) ? url.toString() : null;
+    return isOfficialTurkishHost(url.hostname) || hostMatchesAllowlist(url.hostname, rawAllowlist) ? url.toString() : null;
   } catch { return null; }
 }
 function isAllowedPublicUrl(url) {
-  if (url.protocol !== 'https:' || url.username || url.password || !['', '443'].includes(url.port)) return false;
-  return !blockedNetworkHost(url.hostname);
-}
-function blockedNetworkHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (['::', '::1', '0.0.0.0', 'metadata.google.internal', 'instance-data'].includes(host)) return true;
-  if (/^(?:fc|fd)[0-9a-f]{2}:|^fe[89ab][0-9a-f]:|^ff[0-9a-f]{2}:/i.test(host)) return true;
-  if (host.startsWith('::ffff:')) return true;
-  const parts = host.split('.');
-  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
-    const [a, b] = parts.map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254)
-      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
-      || (a === 100 && b >= 64 && b <= 127) || (a === 198 && [18, 19].includes(b));
-  }
-  return false;
-}
-function isOfficialAutomationHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
-  return host === 'gov.tr' || host === 'bel.tr' || host.endsWith('.gov.tr') || host.endsWith('.bel.tr');
-}
-function hostMatchesAllowlist(hostname, rawAllowlist) {
-  const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
-  const allowed = String(rawAllowlist || '').split(/[\s,;]+/).map((item) => item.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean);
-  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+  return Boolean(safePublicHttpsUrl(url?.toString?.() || url));
 }
 function classifyCandidateSource(candidate = {}) {
   if (candidate.sourceClass) return candidate.sourceClass;
   if (['official-login-service', 'official-search'].includes(candidate.accessMode)) return 'authenticated-official';
-  if (candidate.accessMode === 'manual-only' || candidate.accessMode === 'configured-not-authorized') return 'public-manual';
+  if (candidate.accessMode === 'manual-only' || candidate.accessMode === 'configured-not-authorized' || candidate.accessMode === 'public-portal') return 'public-manual';
   if (candidate.authorized === true && candidate.automatedQueryAllowed === true) return 'authorized-adapter';
   return 'open-machine-readable';
+}
+
+function candidateCanBeReadAutomatically(candidate = {}) {
+  const mode = String(candidate.accessMode || '');
+  const kind = String(candidate.kind || '');
+  if (candidate.sourceClass === 'authenticated-official') return false;
+  if (['manual-only', 'official-login-service', 'official-search', 'configured-not-authorized', 'discovery-only'].includes(mode)) return false;
+  if (kind === 'portal') {
+    if (mode === 'read-only-result' && candidate.readOnlyResult === true && candidate.machineReadableCandidate === true) return true;
+    return candidate.configured === true && candidate.authorized === true && candidate.automatedQueryAllowed === true;
+  }
+  return ['wms', 'wfs', 'arcgis', 'json'].includes(kind)
+    && (candidate.sourceClass === 'open-machine-readable'
+      || candidate.authorized === true && candidate.automatedQueryAllowed === true
+      || candidate.official === true);
 }
 function buildStructuredFieldEvidence(fields = {}, kind = 'open-data') {
   const result = {};

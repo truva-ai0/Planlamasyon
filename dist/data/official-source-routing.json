@@ -1,5 +1,7 @@
 {
   "version": "2026-08-25",
+  "releaseVersion": "3.7.0",
+  "schemaVersion": 2,
   "country": "Türkiye",
   "coverage": {
     "provinceCount": 81,
@@ -7,7 +9,8 @@
     "directCatalogRecordCount": 117,
     "directCatalogProvinceCount": 29,
     "directCatalogDistrictPairCount": 94,
-    "automaticDataClaim": false
+    "automaticDataClaim": false,
+    "automaticPortalReadRule": "Yalnız açık salt-okunur sonuç veya hem authorized hem automatedQueryAllowed işaretli adaptör"
   },
   "accessClasses": {
     "open-machine-readable": {
@@ -20,7 +23,7 @@
       "label": "Yazılı izinli veya yapılandırılmış resmî adaptör",
       "automaticRead": true,
       "userLoginRequired": false,
-      "claimRule": "Adaptör açıkça yetkilendirilmiş ve alan adı izin listesinde olmalıdır."
+      "claimRule": "Adaptör hem authorized hem automatedQueryAllowed olarak açıkça yapılandırılmalı ve alan adı resmî/izin listesinde olmalıdır."
     },
     "public-manual": {
       "label": "Kullanıcının elle açacağı resmî portal",
@@ -67,14 +70,29 @@
       "Ticari kadastro veri kullanımı için TAKPAS sözleşmesi ve ilgili kurum izinleri gerekir."
     ],
     "security": [
-      "Otomatik isteklerde yalnız HTTPS, genel ağ adresi ve izin verilen resmî/kurum alan adları kullanılır; localhost, özel ağ, kullanıcı bilgili URL ve farklı sunucuya form yönlendirmesi reddedilir.",
+      "Otomatik isteklerde yalnız HTTPS, genel ağ alan adı ve izin verilen resmî/kurum alan adları kullanılır; sayısal IP, alternatif IP yazımı, localhost/yerel DNS, kullanıcı bilgili URL, özel port ve farklı origin yönlendirmesi reddedilir.",
+      "Her HTTP yönlendirmesi fetch tarafından otomatik izlenmeden önce yeniden doğrulanır; varsayılan olarak yalnız aynı origin yönlendirmesi kabul edilir.",
       "Salt-okunur GET istekleri sınırlı süre ve en fazla bir güvenli yeniden deneme ile çalışır; form POST isteği otomatik yeniden denenmez.",
+      "GET, HEAD ve açıkça yetkilendirilmiş adaptörlerde POST dışındaki HTTP yöntemleri reddedilir; tek zaman bütçesi retry ve yönlendirme zincirinin tamamını kapsar.",
+      "Yanıt gövdeleri boyut sınırıyla okunur; sınırı aşan içerik ayrıştırılmaz.",
       "Kimlik doğrulama, CAPTCHA, e-Devlet oturumu veya kullanım koşulu hiçbir şekilde aşılmaz."
     ],
     "provenance": [
       "Belge tarihi, erişim tarihi, kaynak URL'si, güven düzeyi, ayrıştırma yöntemi ve alan bazlı kanıt mümkün olduğu sürece sonuçla birlikte korunur.",
+      "Erişim tarihi verinin güncel olduğu iddiasına dönüştürülmez; veri güncelliği yalnız belge tarihine göre current, aging, stale veya unknown olarak gösterilir.",
       "Kaynağı veya parsel eşleşmesi doğrulanmayan teknik değer hesaplamaya sokulmaz."
     ]
+  },
+  "networkGuards": {
+    "protocol": "https-only",
+    "numericIpTargets": "blocked",
+    "privateAndLocalDnsTargets": "blocked",
+    "redirectMode": "manual-same-origin",
+    "maxRedirects": 2,
+    "safeRetryMethods": ["GET", "HEAD"],
+    "maxSafeRetries": 1,
+    "postRetries": 0,
+    "responseSizeBounded": true
   },
   "officialReferences": [
     "https://www.tkgm.gov.tr/duyurular/tapu-ve-kadastro-verilerinin-paylasimi-hakkinda-yonetmelik",

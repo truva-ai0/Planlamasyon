@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const currentBuildPackage = JSON.parse(await readFile('package.json', 'utf8'));
-if (['3.5.0', '3.6.0'].includes(currentBuildPackage.version)) {
+if (['3.5.0', '3.6.0', '3.7.0'].includes(currentBuildPackage.version)) {
   console.log(`Planlamasyon v${currentBuildPackage.version} kaynakları güncel; eski yükseltme adımları atlandı.`);
   process.exit(0);
 }

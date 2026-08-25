@@ -1,4 +1,10 @@
 import { matchEmbeddedCatalog } from './municipality-provider.mjs';
+import {
+  describeSourceFreshness,
+  fetchOfficialResource,
+  readResponseTextLimited,
+  safePublicHttpsUrl
+} from './official-source-security.mjs';
 
 const CACHE = globalThis.__PLANLAMASYON_PLAN_RECORD_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_PLAN_RECORD_CACHE__ = CACHE;
@@ -319,28 +325,30 @@ function buildSourceUrls(location, env) {
 async function fetchOfficialPage(url, fetchImpl, timeoutMs) {
   const safeUrl = safeOfficialUrl(url);
   if (!safeUrl) throw new Error('Plan kayıt kaynağı resmî e-Devlet adresi değil.');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(safeUrl, {
+    const response = await fetchOfficialResource(safeUrl, {
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)'
-      },
-      redirect: 'follow',
-      signal: controller.signal
+        'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)'
+      }
+    }, {
+      fetchImpl,
+      timeoutMs,
+      retryCount: 1,
+      maxRedirects: 2,
+      allowCrossOriginRedirects: true,
+      allowedRedirectHosts: 'turkiye.gov.tr',
+      maxResponseBytes: 2_000_000
     });
     if (response.status === 404) { const error = new Error('Resmî askı hizmeti bulunamadı.'); error.status = 404; throw error; }
     if (!response.ok) { const error = new Error(`Resmî plan sayfası ${response.status} yanıtı verdi.`); error.status = response.status; throw error; }
-    const text = await response.text();
+    const text = await readResponseTextLimited(response, 2_000_000);
     if (!/e-Devlet|Askıdaki İmar Planı|imar plan/i.test(text)) throw new Error('Beklenen resmî plan sayfası içeriği alınamadı.');
     return text;
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('Resmî plan sayfası zaman aşımına uğradı.');
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -407,6 +415,8 @@ function normalizeRecord(record, defaults = {}) {
 }
 
 function recordSource(record) {
+  const retrievedAt = new Date().toISOString();
+  const documentDate = record.announcementStart || null;
   return {
     id: `plan-record-${record.id}`,
     title: record.title || record.sourceTitle || 'Resmî plan/askı kaydı',
@@ -415,8 +425,13 @@ function recordSource(record) {
     kind: 'official-plan-record',
     trust: 'public-information',
     note: record.note || 'Ada/parsel ile eşleşen kamuya açık plan kaydıdır; güncel yapılaşma hakkı değildir.',
-    documentDate: record.announcementStart || null,
-    retrievedAt: new Date().toISOString()
+    documentDate,
+    retrievedAt,
+    sourceClass: 'open-machine-readable',
+    accessMode: 'public-official-page',
+    automationPolicy: 'read-only',
+    dataClaim: 'read-and-parcel-matched',
+    freshness: describeSourceFreshness({ documentDate, retrievedAt })
   };
 }
 
@@ -456,9 +471,12 @@ function safeOfficialUrl(value, base = null) {
   try {
     const url = new URL(String(value), base || undefined);
     const host = url.hostname.toLowerCase();
-    if (url.protocol !== 'https:' || !['turkiye.gov.tr', 'www.turkiye.gov.tr'].includes(host)) return null;
-    url.hash = '';
-    return url.toString();
+    if (!['turkiye.gov.tr', 'www.turkiye.gov.tr'].includes(host)) return null;
+    const safeUrl = safePublicHttpsUrl(url.toString());
+    if (!safeUrl) return null;
+    const parsed = new URL(safeUrl);
+    parsed.hash = '';
+    return parsed.toString();
   } catch { return null; }
 }
 function stripMarkup(value) {

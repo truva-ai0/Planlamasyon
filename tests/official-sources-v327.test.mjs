@@ -158,7 +158,7 @@ test('yetkisiz public-portal GET formu da gönderilmez', async () => {
     }
   });
 
-  assert.deepEqual(portalRequests, [{ url: portalUrl, method: 'GET' }]);
+  assert.deepEqual(portalRequests, []);
   assert.equal(result.records.length, 0);
   assert.match(result.attempts.find((item) => item.id.includes('unauthorizedgetform'))?.message || '', /yetkilendirilmiş/i);
 });
@@ -178,7 +178,7 @@ test('açıkça yetkilendirilmiş yapılandırılmış aday form POST edebilir',
         id: 'authorized-form-adapter', province: 'Deneme', district: 'Örnek',
         title: 'Yetkili Test Adaptörü', provider: 'Deneme Belediyesi',
         url: portalUrl, kind: 'portal', priority: 200,
-        automatedQueryAllowed: true
+        authorized: true, automatedQueryAllowed: true
       }])
     }),
     fetchImpl: async (url, init = {}) => {
@@ -313,7 +313,7 @@ test('Yençok kat değeri floors olur, metre Hmax ile karışmaz ve yapinizami e
     ].join('\n'),
     query: fictionalQuery
   });
-  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.6.0');
+  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.7.0');
   assert.equal(parsed.fields.floors, 25);
   assert.equal(parsed.fields.hmax, undefined);
   assert.equal(parsed.fields.buildingOrder, 'Ayrık');
@@ -379,7 +379,7 @@ test('açık kaynak etiket normalizasyonu yapinizami ve Yençok kat ayrımını 
     yapinizami: 'Ayrık Nizam',
     yencok: '25 kat'
   });
-  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.6.0');
+  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.7.0');
   assert.equal(fields.buildingOrder, 'Ayrık');
   assert.equal(fields.floors, 25);
   assert.equal(fields.hmax, null);

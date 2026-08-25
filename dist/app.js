@@ -7,7 +7,8 @@ const STORE_KEYS = {
   requests: 'planlamasyon-requests-v3-1',
   evidence: 'planlamasyon-evidence-v3-1',
   profile: 'planlamasyon-profile-v3-1',
-  session: 'planlamasyon-identity-session-v3-1'
+  recovery: 'planlamasyon-recovery-v3-7',
+  legacySession: 'planlamasyon-identity-session-v3-1'
 };
 
 const LEGACY_STORE_KEYS = {
@@ -18,14 +19,19 @@ const STORAGE_SCHEMA_VERSION = 1;
 const STORAGE_MIGRATION_KEY = 'planlamasyon-storage-migrated-v3-6';
 const STORE_LIMITS = Object.freeze({ works: 60, favorites: 80, requests: 80 });
 const STORE_MAX_SERIALIZED_CHARS = 480_000;
+const BACKUP_FORMAT = 'planlamasyon-local-backup';
+const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_MAX_FILE_BYTES = 2_000_000;
+const RECOVERY_MAX_ITEMS = 6;
+const RECOVERY_MAX_RAW_CHARS = 120_000;
 
 const elements = {
   themeSwitch: $('#themeSwitch'), startButton: $('#startButton'), openAiButton: $('#openAiButton'),
   profileButton: $('#profileButton'), profileMenu: $('#profileMenu'), profileIdentity: $('#profileIdentity'),
   profileInitials: $('#profileInitials'), profileSvg: $('#profileSvg'), profileMenuUser: $('#profileMenuUser'),
   profileMenuName: $('#profileMenuName'), profileMenuEmail: $('#profileMenuEmail'), profileAuthButton: $('#profileAuthButton'),
-  profileLogoutButton: $('#profileLogoutButton'), parcelSection: $('#parcelSection'), connectionBanner: $('#connectionBanner'),
-  worksCount: $('#worksCount'), favoritesCount: $('#favoritesCount'),
+  parcelSection: $('#parcelSection'), connectionBanner: $('#connectionBanner'),
+  worksCount: $('#worksCount'), favoritesCount: $('#favoritesCount'), requestsCount: $('#requestsCount'),
   parcelForm: $('#parcelForm'), province: $('#provinceSelect'), district: $('#districtSelect'), neighbourhood: $('#neighbourhoodSelect'),
   block: $('#blockInput'), parcel: $('#parcelInput'), submit: $('#parcelSubmit'), resetMap: $('#resetMapButton'),
   mapClick: $('#mapClickButton'), mapCaption: $('#mapCaption'), mapLoading: $('#mapLoading'), mapUnavailable: $('#mapUnavailable'),
@@ -54,8 +60,8 @@ const elements = {
 const state = {
   provinces: [], districts: [], neighbourhoods: [], parcelFeature: null, analysis: null,
   map: null, boundaryLayer: null, parcelLayer: null, parcelMarker: null, mapClickActive: false,
-  lastQuery: null, toastTimer: null, analysisAbort: null, identityEnabled: false, user: null, session: null,
-  syncTimer: null, syncInProgress: false, accountSyncEnabled: false,
+  lastQuery: null, toastTimer: null, analysisAbort: null,
+  drawerReturnFocus: null,
   mapBaseLayer: null, mapBaseFallbackActivated: false, mapBaseUserSelected: false, mapBaseLoaded: false,
   mapBaseAutomaticSwitches: 0, mapBaseFailureTimer: null
 };
@@ -76,7 +82,7 @@ async function boot() {
   setupFooter();
   updateSavedCounts();
   updateProfileUi();
-  void initializeIdentity();
+  initializeLocalProfile();
 
   if (location.protocol === 'file:') {
     setConnection('error', 'Bu dosya sunucu üzerinden açılmalı', 'Canlı servisler için yayın sunucusu veya yerel geliştirme sunucusu kullanılmalıdır.');
@@ -116,11 +122,25 @@ function setupHeader() {
   elements.openAiButton.addEventListener('click', () => openPlanAiDrawer());
   elements.profileButton.addEventListener('click', (event) => {
     event.stopPropagation();
-    elements.profileMenu.hidden = !elements.profileMenu.hidden;
-    elements.profileButton.setAttribute('aria-expanded', String(!elements.profileMenu.hidden));
+    toggleProfileMenu();
+  });
+  elements.profileButton.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    if (elements.profileMenu.hidden) toggleProfileMenu(true);
   });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('.profile-wrap')) closeProfileMenu();
+  });
+  elements.profileMenu.addEventListener('keydown', (event) => {
+    const buttons = $$('button[data-panel]:not([disabled])', elements.profileMenu);
+    if (!buttons.length) return;
+    const index = buttons.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); closeProfileMenu(true); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : event.key === 'ArrowDown' ? (index + 1 + buttons.length) % buttons.length : (index - 1 + buttons.length) % buttons.length;
+    buttons[nextIndex].focus();
   });
   elements.profileMenu.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-panel]');
@@ -130,34 +150,71 @@ function setupHeader() {
   });
 }
 
-function closeProfileMenu() {
+function toggleProfileMenu(focusFirst = false) {
+  const opening = elements.profileMenu.hidden;
+  elements.profileMenu.hidden = !opening;
+  elements.profileButton.setAttribute('aria-expanded', String(opening));
+  if (opening && focusFirst) requestAnimationFrame(() => $('button[data-panel]', elements.profileMenu)?.focus());
+}
+
+function closeProfileMenu(restoreFocus = false) {
   elements.profileMenu.hidden = true;
   elements.profileButton.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) elements.profileButton.focus();
 }
 
 function setupDrawer() {
   elements.drawerClose.addEventListener('click', closeDrawer);
   elements.drawerBackdrop.addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { closeDrawer(); closeProfileMenu(); }
+    if (!elements.drawer.hidden && event.key === 'Tab') trapDrawerFocus(event);
+    if (event.key === 'Escape') {
+      if (!elements.drawer.hidden) closeDrawer();
+      else if (!elements.profileMenu.hidden) closeProfileMenu(true);
+    }
   });
 }
 
 function openDrawer(title, html) {
+  if (elements.drawer.hidden) {
+    const active = document.activeElement;
+    state.drawerReturnFocus = active?.closest?.('#profileMenu') ? elements.profileButton : active;
+  }
   elements.drawerTitle.textContent = title;
   elements.drawerContent.innerHTML = html;
   elements.drawer.classList.toggle('is-plan-ai', title.includes('Plan AI'));
   elements.drawer.hidden = false;
   elements.drawerBackdrop.hidden = false;
   document.body.style.overflow = 'hidden';
+  setDrawerBackgroundInert(true);
   requestAnimationFrame(() => elements.drawerClose.focus({ preventScroll: true }));
 }
 
 function closeDrawer() {
+  if (elements.drawer.hidden) return;
   elements.drawer.hidden = true;
   elements.drawer.classList.remove('is-plan-ai');
   elements.drawerBackdrop.hidden = true;
   document.body.style.overflow = '';
+  setDrawerBackgroundInert(false);
+  const returnTarget = state.drawerReturnFocus;
+  state.drawerReturnFocus = null;
+  requestAnimationFrame(() => {
+    if (returnTarget?.isConnected && typeof returnTarget.focus === 'function') returnTarget.focus({ preventScroll: true });
+  });
+}
+
+function setDrawerBackgroundInert(enabled) {
+  for (const element of [$('.site-header'), $('main')]) if (element && 'inert' in element) element.inert = enabled;
+}
+
+function trapDrawerFocus(event) {
+  const focusable = $$('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),details>summary,[tabindex]:not([tabindex="-1"])', elements.drawer)
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
+  if (!focusable.length) { event.preventDefault(); elements.drawer.focus(); return; }
+  const first = focusable[0]; const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 }
 
 function setupForm() {
@@ -617,6 +674,9 @@ function renderZoningOverview(analysis) {
     { label: 'Kat adedi', value: fields.floors != null ? `${formatNumber(fields.floors)} kat` : null, field: 'floors' },
     { label: 'Yençok / Hmax', value: fields.hmax != null ? `${formatNumber(fields.hmax)} m` : null, field: 'hmax' },
     { label: 'Yapı nizamı', value: fields.buildingOrder, field: 'buildingOrder' },
+    { label: 'Ön bahçe alanı', value: sourcedAreaValue(fields, fieldSources, 'frontGardenArea'), field: 'frontGardenArea' },
+    { label: 'Yan bahçe alanı', value: sourcedAreaValue(fields, fieldSources, 'sideGardenArea'), field: 'sideGardenArea' },
+    { label: 'Arka bahçe alanı', value: sourcedAreaValue(fields, fieldSources, 'rearGardenArea'), field: 'rearGardenArea' },
     { label: conditionsFor('front').length > 1 ? 'Ön bahçe (cepheye göre)' : 'Ön bahçe', value: setbackValue('front', fields.frontSetback), field: conditionsFor('front').length ? 'setbackConditions' : 'frontSetback' },
     { label: conditionsFor('side').length > 1 ? 'Yan bahçe (koşula göre)' : 'Yan bahçe', value: setbackValue('side', fields.sideSetback), field: conditionsFor('side').length ? 'setbackConditions' : 'sideSetback' },
     { label: conditionsFor('rear').length > 1 ? 'Arka bahçe (koşula göre)' : 'Arka bahçe', value: setbackValue('rear', fields.rearSetback), field: conditionsFor('rear').length ? 'setbackConditions' : 'rearSetback' }
@@ -626,6 +686,19 @@ function renderZoningOverview(analysis) {
     const provenance = value != null ? zoningFieldProvenance(source) : '';
     return `<div class="${value == null ? 'is-missing' : 'is-verified'}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? 'Resmî belgede bulunamadı')}${provenance ? `<small>${escapeHtml(provenance)}</small>` : ''}</dd></div>`;
   }).join('');
+}
+
+function sourcedAreaValue(fields = {}, fieldSources = {}, field) {
+  const rawValue = fields[field];
+  if (rawValue == null || String(rawValue).trim() === '') return null;
+  const value = Number(rawValue);
+  const source = fieldSources[field];
+  if (!Number.isFinite(value) || value < 0 || !hasSourceTrace(source)) return null;
+  return `${formatNumber(value)} m²`;
+}
+
+function hasSourceTrace(source) {
+  return Boolean(source && typeof source === 'object' && (source.id || source.title || source.provider || source.url || source.sourceUrl));
 }
 
 function zoningFieldProvenance(source = {}) {
@@ -669,7 +742,9 @@ function renderDecisionSummary(analysis) {
 
 function hasVerifiedZoning(analysis = {}) {
   const fields = analysis.zoning?.fields || {};
-  const hasOfficialValue = Boolean(fields.landUse || fields.taks != null || fields.emsal != null || fields.floors != null || fields.hmax != null || fields.buildingOrder);
+  const fieldSources = analysis.zoning?.fieldSources || {};
+  const hasVerifiedGardenArea = ['frontGardenArea', 'sideGardenArea', 'rearGardenArea'].some((field) => sourcedAreaValue(fields, fieldSources, field));
+  const hasOfficialValue = Boolean(fields.landUse || fields.taks != null || fields.emsal != null || fields.floors != null || fields.hmax != null || fields.buildingOrder || hasVerifiedGardenArea);
   const trustedStatus = ['complete', 'partial'].includes(analysis.status) || ['verified', 'user-evidence', 'ai-assisted-official'].includes(analysis.zoningStatus);
   return Boolean(hasOfficialValue && trustedStatus && !analysis.zoning?.conflict && analysis.status !== 'conflict');
 }
@@ -986,7 +1061,7 @@ function renderPlanAi(planAi = {}) {
     elements.planAiBadge.textContent = 'Sınırlı mod';
     elements.planAiIntro.textContent = `${planAi.message || 'Plan AI bu analizde kullanılamadı.'} Mevcut sonuçlar yine güvenli özet modunda açıklanabilir.`;
   }
-  const fieldLabels = { landUse:'Plan fonksiyonu', netParcelArea:'Net imar parseli alanı', taks:'TAKS', emsal:'Emsal', floors:'Kat', hmax:'Yençok / Hmax', buildingOrder:'Yapı nizamı', frontSetback:'Ön bahçe', sideSetback:'Yan bahçe', rearSetback:'Arka bahçe', setbackConditions:'Koşullu çekme mesafeleri' };
+  const fieldLabels = { landUse:'Plan fonksiyonu', netParcelArea:'Net imar parseli alanı', taks:'TAKS', emsal:'Emsal', floors:'Kat', hmax:'Yençok / Hmax', buildingOrder:'Yapı nizamı', frontGardenArea:'Ön bahçe alanı', sideGardenArea:'Yan bahçe alanı', rearGardenArea:'Arka bahçe alanı', frontSetback:'Ön bahçe', sideSetback:'Yan bahçe', rearSetback:'Arka bahçe', setbackConditions:'Koşullu çekme mesafeleri' };
   const fieldRows = Object.entries(fieldEvidence).slice(0, 12).map(([key, item]) => `
     <div class="plan-ai-evidence-item"><span><strong>${escapeHtml(fieldLabels[key] || key)}</strong><small>${escapeHtml(item.quote || '')}</small></span>${item.sourceUrl ? `<a href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Kaynak ↗</a>` : ''}</div>`).join('');
   const sourceRows = evidence.slice(0, 6).map((item) => `
@@ -1000,12 +1075,12 @@ function renderPlanAi(planAi = {}) {
 
 function openPlanAiDrawer() {
   if (!state.analysis) {
-    openDrawer('✦ Plan AI · v3.6.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
+    openDrawer('✦ Plan AI · v3.7.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
     return;
   }
   const ai = state.analysis.planAi || {};
   const degraded = Boolean(ai.degraded || ai.configured === false || ['disabled', 'unavailable', 'no-values', 'review-required'].includes(ai.status));
-  openDrawer('✦ Plan AI · v3.6.0', `
+  openDrawer('✦ Plan AI · v3.7.0', `
     <div class="plan-ai-chat">
       <div class="plan-ai-chat-status"><strong>${escapeHtml(degraded ? 'Sınırlı açıklama modu' : 'Plan AI aktif')}</strong><span>${escapeHtml(degraded ? 'Canlı AI yanıt veremezse yalnız mevcut analizde yazan değerler özetlenir; yeni imar değeri tahmin edilmez.' : ai.message || 'Mevcut analiz üzerinden soru sorabilirsiniz.')}</span></div>
       <div class="plan-ai-suggestions">
@@ -1058,7 +1133,7 @@ function buildPlanAiFallbackAnswer(question, analysis = {}) {
     return unknown;
   }
   if (/eksik|doğrulan|dogrulan/.test(normalizedQuestion)) {
-    const labels = { landUse:'plan fonksiyonu', taks:'TAKS', emsal:'emsal', floors:'kat adedi', hmax:'Yençok/Hmax', buildingOrder:'yapı nizamı', frontSetback:'ön bahçe', sideSetback:'yan bahçe', rearSetback:'arka bahçe' };
+    const labels = { landUse:'plan fonksiyonu', taks:'TAKS', emsal:'emsal', floors:'kat adedi', hmax:'Yençok/Hmax', buildingOrder:'yapı nizamı', frontGardenArea:'ön bahçe alanı', sideGardenArea:'yan bahçe alanı', rearGardenArea:'arka bahçe alanı', frontSetback:'ön bahçe', sideSetback:'yan bahçe', rearSetback:'arka bahçe' };
     return missing.length ? `Doğrulanamayan başlıca bilgiler: ${missing.map((key) => labels[key] || key).join(', ')}.` : 'Ana hesap alanlarında eksik işareti yok; özel plan notları ve ruhsat koşulları yine yetkili idareden kontrol edilmelidir.';
   }
   const knownPossibilities = (analysis.possibilities || []).filter((item) => ['allowed', 'conditional', 'required'].includes(item.status));
@@ -1221,6 +1296,10 @@ function buildShareSummary() {
   if (fields.emsal != null) lines.push(`KAKS/Emsal: ${formatNumber(fields.emsal)}`);
   if (fields.floors != null) lines.push(`Kat: ${formatNumber(fields.floors)}`);
   if (fields.hmax != null) lines.push(`Yençok/Hmax: ${formatNumber(fields.hmax)} m`);
+  for (const [field, label] of [['frontGardenArea', 'Ön bahçe alanı'], ['sideGardenArea', 'Yan bahçe alanı'], ['rearGardenArea', 'Arka bahçe alanı']]) {
+    const area = sourcedAreaValue(fields, analysis.zoning?.fieldSources || {}, field);
+    if (area) lines.push(`${label}: ${area}`);
+  }
   if (metrics.footprint?.value != null) lines.push(`Teorik taban oturumu: ${metrics.footprint.display}`);
   if (metrics.construction?.value != null) lines.push(`Emsale esas teorik alan: ${metrics.construction.display}`);
   if (report.missingLabels.length) lines.push(`Doğrulanmayan alanlar: ${report.missingLabels.slice(0, 8).join(', ')}${report.missingLabels.length > 8 ? '…' : ''}`);
@@ -1237,12 +1316,13 @@ function openReportPanel() {
   elements.printReport.innerHTML = printMarkup;
   openDrawer('Parsel Raporu', `
     <div class="report-preview-card">
-      <span class="section-kicker">Yazdırılabilir müşteri özeti</span>
+      <div class="report-preview-heading"><span class="section-kicker">Yazdırılabilir müşteri özeti</span><span class="report-state-label ${reportStateClass(report)}">${escapeHtml(reportStateLabel(report))}</span></div>
       <h4>${escapeHtml(report.location)} · ${escapeHtml(report.blockParcel)}</h4>
-      <p>${report.zoningVerified ? 'Doğrulanabilen imar değerleri kaynaklarıyla rapora eklendi.' : 'İmar değerleri doğrulanmadı; raporda eksik alanlar açıkça işaretlendi.'}</p>
+      <p>${escapeHtml(reportCoverageExplanation(report))}</p>
       <div class="report-preview-stats">
-        <span><strong>${report.verifiedCount}</strong> doğrulanan alan</span>
-        <span><strong>${report.missingLabels.length}</strong> doğrulanmayan alan</span>
+        <span><strong>Bulundu</strong> kadastro kaydı</span>
+        <span><strong>${report.verifiedFieldCount}/${report.totalFieldCount}</strong> imar alanı</span>
+        <span><strong>${report.calculatedMetricCount}/${report.totalMetricCount}</strong> teorik hesap</span>
         <span><strong>${report.sources.length}</strong> kaynak</span>
       </div>
     </div>
@@ -1302,6 +1382,9 @@ function buildReportModel(now = new Date()) {
     reportFieldRow('Kat adedi', fields.floors != null ? `${formatNumber(fields.floors)} kat` : null, fieldSources.floors),
     reportFieldRow('Yençok / Hmax', fields.hmax != null ? `${formatNumber(fields.hmax)} m` : null, fieldSources.hmax),
     reportFieldRow('Yapı nizamı', fields.buildingOrder, fieldSources.buildingOrder),
+    reportFieldRow('Ön bahçe alanı', sourcedAreaValue(fields, fieldSources, 'frontGardenArea'), fieldSources.frontGardenArea),
+    reportFieldRow('Yan bahçe alanı', sourcedAreaValue(fields, fieldSources, 'sideGardenArea'), fieldSources.sideGardenArea),
+    reportFieldRow('Arka bahçe alanı', sourcedAreaValue(fields, fieldSources, 'rearGardenArea'), fieldSources.rearGardenArea),
     reportFieldRow('Ön bahçe çekme mesafesi', reportSetbackValue(fields, 'front', fields.frontSetback), fieldSources.setbackConditions || fieldSources.frontSetback),
     reportFieldRow('Yan bahçe çekme mesafesi', reportSetbackValue(fields, 'side', fields.sideSetback), fieldSources.setbackConditions || fieldSources.sideSetback),
     reportFieldRow('Arka bahçe çekme mesafesi', reportSetbackValue(fields, 'rear', fields.rearSetback), fieldSources.setbackConditions || fieldSources.rearSetback)
@@ -1336,6 +1419,9 @@ function buildReportModel(now = new Date()) {
     } : nextSource);
   }
   const missingLabels = rows.filter((row) => !row.verified).map((row) => row.label);
+  const verifiedFieldCount = rows.filter((row) => row.verified).length;
+  const calculatedMetricCount = metricRows.filter((row) => row.verified).length;
+  const coverage = { verifiedFieldCount, totalFieldCount: rows.length, missingFieldCount: missingLabels.length, calculatedMetricCount, totalMetricCount: metricRows.length };
   return {
     location: locationText,
     blockParcel: `${p.block || '—'}-${p.parcel || '—'}`,
@@ -1345,12 +1431,13 @@ function buildReportModel(now = new Date()) {
     mapSheet: cleanStoreText(p.mapSheet || 'Belirtilmemiş', 100),
     generatedAt: new Intl.DateTimeFormat('tr-TR', { dateStyle: 'long', timeStyle: 'short' }).format(now),
     zoningVerified: hasVerifiedZoning(analysis),
-    status: reportStatusText(analysis),
+    status: reportStatusText(analysis, coverage),
     explanation: cleanStoreText(analysis.explanation || elements.plainExplanation?.textContent || '', 1400),
     rows,
     metricRows,
     missingLabels,
-    verifiedCount: rows.filter((row) => row.verified).length + metricRows.filter((row) => row.verified).length,
+    verifiedCount: verifiedFieldCount + calculatedMetricCount,
+    ...coverage,
     sources: [...sourceMap.values()].slice(0, 16)
   };
 }
@@ -1379,11 +1466,13 @@ function reportSetbackValue(fields, type, scalar) {
   return scalar != null ? `${formatNumber(scalar)} m` : null;
 }
 
-function reportStatusText(analysis = {}) {
-  if (analysis.status === 'complete') return 'Doğrulanabilen imar analizi hazır';
-  if (analysis.status === 'partial') return 'Kısmi imar analizi — eksik alanlar var';
+function reportStatusText(analysis = {}, coverage = {}) {
   if (analysis.status === 'conflict') return 'Kaynak çelişkisi — yetkili idare teyidi gerekli';
-  return 'Kadastro doğrulandı; imar ve yapı hakkı doğrulanmadı';
+  const verified = Number(coverage.verifiedFieldCount || 0);
+  const total = Number(coverage.totalFieldCount || 0);
+  if (!verified) return 'Kadastro kaydı bulundu; imar ve yapı hakkı doğrulanmadı';
+  if (verified < total) return `Kısmi imar raporu — ${verified}/${total} alan doğrulandı`;
+  return `İmar alanları doğrulandı — ${verified}/${total}`;
 }
 
 function reportSourceDate(source = {}) {
@@ -1397,12 +1486,28 @@ function reportTrustLabel(value) {
   return ({ verified: 'Doğrulanmış kaynak', 'user-evidence': 'Kullanıcının resmî belgesi', 'ai-assisted-official': 'Resmî kaynakta kanıt destekli', high: 'Yüksek güven', medium: 'Orta güven', low: 'Düşük güven' })[value] || cleanStoreText(value || 'Bilgi amaçlı kaynak', 80);
 }
 
+function reportStateClass(report) {
+  if (!report.verifiedFieldCount) return 'is-unverified';
+  return report.missingFieldCount ? 'is-partial' : 'is-verified';
+}
+
+function reportStateLabel(report) {
+  if (!report.verifiedFieldCount) return 'İmar doğrulanmadı';
+  return report.missingFieldCount ? 'Kısmi doğrulama' : 'İmar alanları doğrulandı';
+}
+
+function reportCoverageExplanation(report) {
+  if (!report.verifiedFieldCount) return 'Kadastro kaydı bulundu; yapı hakkı ve imar koşulları doğrulanmadı. Bu rapor imar durumu veya ruhsat belgesi değildir.';
+  if (report.missingFieldCount) return `${report.totalFieldCount} imar alanının ${report.verifiedFieldCount} tanesi kaynak iziyle doğrulandı; kalan ${report.missingFieldCount} alan tahmin edilmedi.`;
+  return 'Listelenen imar alanları kaynak iziyle doğrulandı. Yine de ruhsat ve kesin hak için yetkili idarenin güncel yazılı kaydı gerekir.';
+}
+
 function renderPrintableReport(report) {
   const rowMarkup = (row) => `<tr class="${row.verified ? 'report-verified' : 'report-unverified'}"><th>${escapeHtml(row.label)}</th><td><strong>${escapeHtml(row.value)}</strong>${row.provenance ? `<small>${escapeHtml(row.provenance)}</small>` : ''}</td><td>${row.verified ? 'Doğrulandı' : 'Doğrulanmadı'}</td></tr>`;
   const sourceMarkup = report.sources.length ? report.sources.map((source, index) => `<li><strong>${index + 1}. ${escapeHtml(source.title)}</strong>${source.provider ? `<span>${escapeHtml(source.provider)}</span>` : ''}<small>${escapeHtml([source.date, source.trust].filter(Boolean).join(' · '))}</small>${source.url ? `<a href="${escapeHtml(source.url)}">${escapeHtml(source.url)}</a>` : ''}</li>`).join('') : '<li><strong>İmar kaynağı bulunamadı.</strong><span>Yetkili idarenin güncel yazılı kaydı alınmalıdır.</span></li>';
   return `<article class="print-report-sheet">
     <header class="print-report-head"><div><span>PLANLAMASYON</span><h1>Parsel Bilgi ve İmar Analiz Raporu</h1></div><div><strong>${escapeHtml(report.blockParcelDisplay)}</strong><small>${escapeHtml(report.generatedAt)}</small></div></header>
-    <section class="print-report-alert ${report.zoningVerified ? 'is-verified' : 'is-unverified'}"><strong>${escapeHtml(report.status)}</strong><p>${report.zoningVerified ? 'Aşağıdaki doğrulanmış değerler gösterilen kaynak ve tarihlere dayanır.' : 'Kadastro sonucu yapı hakkı değildir. Doğrulanmayan imar değerleri tahmin edilmemiştir.'}</p></section>
+    <section class="print-report-alert ${reportStateClass(report)}"><strong>${escapeHtml(report.status)}</strong><p>${escapeHtml(reportCoverageExplanation(report))}</p></section>
     <section><h2>Parsel bilgileri</h2><dl class="print-parcel-grid"><div><dt>Konum</dt><dd>${escapeHtml(report.location)}</dd></div><div><dt>Ada / Parsel</dt><dd>${escapeHtml(report.blockParcelDisplay)}</dd></div><div><dt>Kadastro alanı</dt><dd>${escapeHtml(report.cadastralArea)}</dd></div><div><dt>TKGM niteliği</dt><dd>${escapeHtml(report.quality)}</dd></div><div><dt>Pafta</dt><dd>${escapeHtml(report.mapSheet)}</dd></div></dl></section>
     <section><h2>İmar ve yapılaşma koşulları</h2><table><thead><tr><th>Alan</th><th>Değer / dayanak</th><th>Durum</th></tr></thead><tbody>${report.rows.map(rowMarkup).join('')}</tbody></table></section>
     <section><h2>Teorik hesaplar</h2><table><thead><tr><th>Hesap</th><th>Sonuç / dayanak</th><th>Durum</th></tr></thead><tbody>${report.metricRows.map(rowMarkup).join('')}</tbody></table></section>
@@ -1442,7 +1547,7 @@ function openEvidenceForm() {
 
       <section class="document-reader-card" aria-labelledby="documentReaderTitle">
         <div class="document-reader-heading">
-          <div><span class="section-kicker">Belge okuma motoru · v3.6.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
+          <div><span class="section-kicker">Belge okuma motoru · v3.7.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
           <span class="data-badge" id="documentReaderBadge">Hazır</span>
         </div>
         <div class="document-tabs" role="tablist" aria-label="Belge giriş yöntemi">
@@ -1508,6 +1613,12 @@ function openEvidenceForm() {
         <div class="field"><label>Ön bahçe (m)</label><input name="frontSetback" inputmode="decimal" value="${escapeHtml(saved.frontSetback ?? '')}"></div>
         <div class="field"><label>Yan bahçe (m)</label><input name="sideSetback" inputmode="decimal" value="${escapeHtml(saved.sideSetback ?? '')}"></div>
         <div class="field"><label>Arka bahçe (m)</label><input name="rearSetback" inputmode="decimal" value="${escapeHtml(saved.rearSetback ?? '')}"></div>
+      </div>
+      <p class="field-help">Bahçe alanları yalnız resmî belgede m² olarak açıkça yazıyorsa doldurulur; çekme mesafelerinden alan tahmini yapılmaz.</p>
+      <div class="drawer-form-grid">
+        <div class="field"><label>Belgede yazan ön bahçe alanı (m²)</label><input name="frontGardenArea" inputmode="decimal" value="${escapeHtml(saved.frontGardenArea ?? '')}" placeholder="Belgede açıkça yazıyorsa"></div>
+        <div class="field"><label>Belgede yazan yan bahçe alanı (m²)</label><input name="sideGardenArea" inputmode="decimal" value="${escapeHtml(saved.sideGardenArea ?? '')}" placeholder="Belgede açıkça yazıyorsa"></div>
+        <div class="field"><label>Belgede yazan arka bahçe alanı (m²)</label><input name="rearGardenArea" inputmode="decimal" value="${escapeHtml(saved.rearGardenArea ?? '')}" placeholder="Belgede açıkça yazıyorsa"></div>
       </div>
       <h4>Resmî belgede belirtilen kullanım seçenekleri</h4>
       <div class="allowance-list">${Object.entries(allowanceLabels).map(([key, label]) => `
@@ -1731,7 +1842,7 @@ async function ocrImages(images, onProgress) {
 
 function applyParsedEvidenceToForm(form, parsed) {
   const evidence = parsed.evidence || {};
-  const names = ['sourceTitle','authority','sourceUrl','planName','planNumber','planScale','planDate','landUse','netParcelArea','taks','emsal','floors','hmax','buildingOrder','frontSetback','sideSetback','rearSetback','setbackConditions','parkingRequired','roadDedicationPossible','floodDataStatus','planNotes','constraints','documentName','documentMimeType','documentHash','parserVersion','documentType','extractionConfidence','parcelMatchStatus','fieldEvidence','extractedAt'];
+  const names = ['sourceTitle','authority','sourceUrl','planName','planNumber','planScale','planDate','landUse','netParcelArea','taks','emsal','floors','hmax','buildingOrder','frontSetback','sideSetback','rearSetback','frontGardenArea','sideGardenArea','rearGardenArea','setbackConditions','parkingRequired','roadDedicationPossible','floodDataStatus','planNotes','constraints','documentName','documentMimeType','documentHash','parserVersion','documentType','extractionConfidence','parcelMatchStatus','fieldEvidence','extractedAt'];
   for (const name of names) {
     const field = form.elements[name];
     if (!field) continue;
@@ -1797,7 +1908,8 @@ function evidenceFromForm(formData) {
     confirmed: formData.get('confirmed') === 'on', sourceTitle: value('sourceTitle'), authority: value('authority'), sourceUrl: value('sourceUrl') || null,
     planName: value('planName'), planNumber: value('planNumber'), planScale: value('planScale'), planDate: value('planDate'), landUse: value('landUse'),
     netParcelArea: number('netParcelArea'), taks: number('taks'), emsal: number('emsal'), floors: number('floors'), hmax: number('hmax'), buildingOrder: value('buildingOrder'),
-    frontSetback: number('frontSetback'), sideSetback: number('sideSetback'), rearSetback: number('rearSetback'), setbackConditions, allowances,
+    frontSetback: number('frontSetback'), sideSetback: number('sideSetback'), rearSetback: number('rearSetback'),
+    frontGardenArea: number('frontGardenArea'), sideGardenArea: number('sideGardenArea'), rearGardenArea: number('rearGardenArea'), setbackConditions, allowances,
     parkingRequired: parseBoolean(value('parkingRequired')), roadDedicationPossible: parseBoolean(value('roadDedicationPossible')),
     floodDataStatus: value('floodDataStatus') || null, planNotes: value('planNotes'), constraints: value('constraints').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
     documentName: value('documentName') || null, documentMimeType: value('documentMimeType') || null, documentHash: value('documentHash') || null,
@@ -1829,17 +1941,17 @@ function deleteEvidence() {
 function openRequestForm() {
   if (!state.parcelFeature) return;
   const p = state.parcelFeature.properties || {};
-  const userEmail = state.user?.email || '';
   const profile = readObjectStore(STORE_KEYS.profile);
   openDrawer('Analiz Talebi Gönder', `
     <form class="drawer-form" id="requestForm">
-      <div class="drawer-help">Talep; parselin plan, plan notu ve imar koşullarının incelenmesi için kaydedilir. E-posta servisi yapılandırılmışsa analiz ekibine de iletilir.</div>
+      <div class="drawer-help"><strong>Gönderim durumu açıkça gösterilir.</strong><br>Talep önce e-posta servisine iletilmeye çalışılır. Ekip gönderimi doğrulanamazsa kayıt yalnız bu cihazdaki “Taleplerim” listesine eklenir.</div>
       <div class="account-card"><strong>${escapeHtml([p.province,p.district,p.neighbourhood].filter(Boolean).join(' / '))}</strong><span>${escapeHtml(p.block || '—')} ada ${escapeHtml(p.parcel || '—')} parsel · ${escapeHtml(formatArea(p.area,p.areaText))}</span></div>
-      <div class="field"><label>Adınız</label><input name="name" value="${escapeHtml(profile.fullName || state.user?.user_metadata?.full_name || '')}"></div>
-      <div class="field"><label>E-posta</label><input name="email" type="email" required value="${escapeHtml(userEmail)}"></div>
-      <div class="field"><label>Telefon (isteğe bağlı)</label><input name="phone" type="tel"></div>
-      <div class="field"><label>Notunuz</label><textarea name="note" placeholder="Özellikle incelenmesini istediğiniz konu..."></textarea></div>
-      <button class="button button-primary" type="submit">Talebi Kaydet ve Gönder</button>
+      <div class="field"><label for="requestName">Adınız</label><input id="requestName" name="name" maxlength="120" autocomplete="name" value="${escapeHtml(profile.fullName || '')}"></div>
+      <div class="field"><label for="requestEmail">E-posta</label><input id="requestEmail" name="email" type="email" maxlength="180" autocomplete="email" required></div>
+      <div class="field"><label for="requestPhone">Telefon (isteğe bağlı)</label><input id="requestPhone" name="phone" type="tel" maxlength="40" autocomplete="tel"></div>
+      <div class="field"><label for="requestNote">Notunuz</label><textarea id="requestNote" name="note" maxlength="2000" placeholder="Özellikle incelenmesini istediğiniz konu..."></textarea></div>
+      <div class="drawer-inline-status" id="requestFormStatus" role="status" aria-live="polite" tabindex="-1" hidden></div>
+      <button class="button button-primary" type="submit">Talebi Gönder</button>
     </form>`);
   const form = $('#requestForm', elements.drawerContent);
   form.addEventListener('submit', async (event) => {
@@ -1850,29 +1962,33 @@ function openRequestForm() {
       const result = await apiPost('/api/request-analysis', {
         name: data.get('name'), email: data.get('email'), phone: data.get('phone'), note: data.get('note'),
         parcel: { ...p }, missing: state.analysis?.zoning?.missing || [], sourcePage: location.href
-      }, { authenticated: true });
+      });
       const item = {
-        id: result.id, title: `${p.block || '—'} ada ${p.parcel || '—'} parsel`,
-        subtitle: `${[p.province,p.district,p.neighbourhood].filter(Boolean).join(' / ')} · ${result.status}`,
-        status: result.status, createdAt: result.createdAt, query: state.lastQuery || parcelQueryFromFeature(state.parcelFeature)
+        id: cleanStoreText(result.id || `local-${Date.now()}`, 180), title: `${p.block || '—'} ada ${p.parcel || '—'} parsel`,
+        subtitle: `${[p.province,p.district,p.neighbourhood].filter(Boolean).join(' / ')} · ${result.emailSent ? 'Ekibe gönderildi' : 'Yalnız bu cihazda'}`,
+        status: result.emailSent ? 'Ekibe gönderildi' : 'E-posta gönderilmedi', createdAt: result.createdAt || new Date().toISOString(), query: state.lastQuery || parcelQueryFromFeature(state.parcelFeature)
       };
       upsertCollection(STORE_KEYS.requests, item, 80);
       scheduleUserSync();
       closeDrawer();
-      showToast(result.emailSent ? 'Analiz talebi kaydedildi ve ekibe e-posta gönderildi.' : 'Analiz talebi kaydedildi. E-posta servisi henüz yapılandırılmamış olabilir.');
+      showToast(result.emailSent
+        ? 'Talep ekibe e-posta ile gönderildi; bir kopyası bu cihazdaki Taleplerim listesine eklendi.'
+        : 'Talep ekibe gönderilmedi. Yalnız bu cihazdaki Taleplerim listesine eklendi.', result.emailSent ? 'success' : 'warning');
     } catch (error) {
-      button.disabled = false; button.textContent = 'Talebi Kaydet ve Gönder'; showToast(readableError(error));
+      button.disabled = false; button.textContent = 'Talebi Gönder';
+      const status = $('#requestFormStatus', form);
+      if (status) { status.hidden = false; status.className = 'drawer-inline-status is-error'; status.textContent = readableError(error); status.focus?.(); }
+      showToast(readableError(error), 'error');
     }
   });
 }
 
 function openProfilePanel(panel) {
-  if (panel === 'logout') return logoutIdentity();
   if (panel === 'works') return openSavedList('Çalışmalarım', readArrayStore(STORE_KEYS.works), 'works');
   if (panel === 'favorites') return openSavedList('Favorilerim', readArrayStore(STORE_KEYS.favorites), 'favorites');
   if (panel === 'requests') return openSavedList('Taleplerim', readArrayStore(STORE_KEYS.requests), 'requests');
-  if (panel === 'auth') return state.user ? openAccountPanel() : openAuthPanel();
-  if (panel === 'account') return state.user ? openAccountPanel() : openAuthPanel();
+  if (panel === 'data') return openLocalDataPanel();
+  if (panel === 'auth' || panel === 'account') return openLocalProfilePanel();
 }
 
 function openSavedList(title, items, kind) {
@@ -1882,7 +1998,7 @@ function openSavedList(title, items, kind) {
     <article class="drawer-item"><strong>${escapeHtml(item.title || 'Kayıt')}</strong><span>${escapeHtml(item.subtitle || item.createdAt || '')}</span>
     <div class="drawer-item-meta">${item.status ? `<span class="drawer-chip">${escapeHtml(item.status)}</span>` : ''}${item.snapshot?.analysisStatus ? `<span class="drawer-chip">${escapeHtml(item.snapshot.analysisStatus)}</span>` : ''}</div>
     <div class="drawer-list-actions">${item.query?.neighbourhoodId && item.query?.block && item.query?.parcel ? `<button data-open-index="${index}" aria-label="${escapeHtml(item.title || 'Parsel')} kaydını aç">Parseli Aç</button>` : ''}<button data-delete-index="${index}" aria-label="${escapeHtml(item.title || 'Kayıt')} kaydını sil">Sil</button></div></article>`).join('')}</div>` : '<div class="drawer-empty">Henüz kayıt bulunmuyor.</div>';
-  openDrawer(title, (state.accountSyncEnabled ? '' : '<div class="auth-status local-storage-notice"><strong>Bu cihazda saklanıyor.</strong><br>Veriler sürümlü ve sınırlı tarayıcı hafızasında tutulur; başka cihazlara otomatik aktarılmaz.</div>') + listHeader + html);
+  openDrawer(title, '<div class="auth-status local-storage-notice"><strong>Yalnız bu cihazda saklanıyor.</strong><br>Bu liste bir çevrim içi hesaba bağlı değildir. Tarayıcı verileri silinirse kayıtlar da silinir; “Yedekle / Geri Yükle” bölümünden yedek alabilirsiniz.</div>' + listHeader + html);
   $$('[data-open-index]', elements.drawerContent).forEach((button) => button.addEventListener('click', async () => {
     const item = items[Number(button.dataset.openIndex)]; closeDrawer(); await reopenSavedItem(item);
   }));
@@ -1953,203 +2069,192 @@ function syncFavoriteButton() {
 function updateSavedCounts() {
   if (elements.worksCount) elements.worksCount.textContent = String(readArrayStore(STORE_KEYS.works).length);
   if (elements.favoritesCount) elements.favoritesCount.textContent = String(readArrayStore(STORE_KEYS.favorites).length);
+  if (elements.requestsCount) elements.requestsCount.textContent = String(readArrayStore(STORE_KEYS.requests).length);
 }
 
-async function initializeIdentity() {
-  state.identityEnabled = false;
-  state.accountSyncEnabled = false;
-  try {
-    const syncProbe = await fetch('/api/user-data', { headers: { Accept: 'application/json' } });
-    const syncPayload = await safeJson(syncProbe);
-    state.accountSyncEnabled = !(syncProbe.status === 401 && syncPayload?.code === 'ACCOUNT_SYNC_DISABLED');
-  } catch { state.accountSyncEnabled = false; }
-  if (state.accountSyncEnabled) {
-    try {
-      const settings = await fetch('/.netlify/identity/settings', { headers: { Accept: 'application/json' } });
-      const contentType = String(settings.headers.get('content-type') || '').toLowerCase();
-      const payload = contentType.includes('application/json') ? await safeJson(settings) : null;
-      state.identityEnabled = Boolean(settings.ok && payload && typeof payload === 'object');
-    } catch { state.identityEnabled = false; }
-  }
-  const session = readSession();
-  if (state.identityEnabled && session?.access_token) {
-    state.session = session;
-    try { state.user = await getIdentityUser(); await pullUserData(); }
-    catch { clearSession(); state.user = null; }
-  } else if (!state.identityEnabled) {
-    clearSession(); state.session = null; state.user = null;
-  }
+function initializeLocalProfile() {
+  try { localStorage.removeItem(STORE_KEYS.legacySession); } catch {}
   updateProfileUi();
 }
 
-function openAuthPanel(active = 'login') {
-  openDrawer('Giriş Yap / Kayıt Ol', `
-    <div class="auth-tabs"><button class="auth-tab ${active === 'login' ? 'is-active' : ''}" data-auth-tab="login">Giriş Yap</button><button class="auth-tab ${active === 'signup' ? 'is-active' : ''}" data-auth-tab="signup">Kayıt Ol</button></div>
-    <div id="authFormArea"></div>`);
-  $$('[data-auth-tab]', elements.drawerContent).forEach((button) => button.addEventListener('click', () => renderAuthForm(button.dataset.authTab)));
-  renderAuthForm(active);
-}
-
-function renderAuthForm(mode) {
-  $$('.auth-tab', elements.drawerContent).forEach((button) => button.classList.toggle('is-active', button.dataset.authTab === mode));
-  const area = $('#authFormArea', elements.drawerContent);
-  if (!state.identityEnabled) {
-    area.innerHTML = '<div class="auth-status"><strong>Kayıtlar yalnız bu cihazda saklanıyor.</strong><br>Çalışmalarım, Favorilerim ve Taleplerim bu tarayıcıda kullanılabilir; başka cihazlara otomatik aktarılmaz.</div>';
-    return;
-  }
-  if (mode === 'signup') {
-    area.innerHTML = `<form class="drawer-form" id="signupForm"><div class="field"><label>Ad / Nick</label><input name="name" required></div><div class="field"><label>E-posta</label><input name="email" type="email" required></div><div class="field"><label>Şifre</label><input name="password" type="password" minlength="8" required></div><button class="button button-primary" type="submit">Kayıt Ol</button><p class="auth-note">E-posta doğrulaması açıksa gelen bağlantıyla hesabınızı doğrulamanız gerekir.</p></form>`;
-    $('#signupForm', area).addEventListener('submit', handleSignup);
-  } else {
-    area.innerHTML = `<form class="drawer-form" id="loginForm"><div class="field"><label>E-posta</label><input name="email" type="email" required></div><div class="field"><label>Şifre</label><input name="password" type="password" required></div><button class="button button-primary" type="submit">Giriş Yap</button><button class="button button-secondary" id="recoverButton" type="button">Şifremi Unuttum</button></form>`;
-    $('#loginForm', area).addEventListener('submit', handleLogin);
-    $('#recoverButton', area).addEventListener('click', handleRecover);
-  }
-}
-
-async function handleSignup(event) {
-  event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const button = $('button[type="submit"]', form); button.disabled = true;
-  try {
-    const response = await fetch('/.netlify/identity/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: data.get('email'), password: data.get('password'), data: { full_name: data.get('name'), nick: data.get('name') } }) });
-    const payload = await safeJson(response);
-    if (!response.ok) throw new Error(payload?.msg || payload?.message || 'Kayıt oluşturulamadı.');
-    showToast('Kayıt oluşturuldu. E-posta doğrulaması gerekiyorsa gelen bağlantıyı açın.'); renderAuthForm('login');
-  } catch (error) { showToast(readableError(error)); button.disabled = false; }
-}
-
-async function handleLogin(event) {
-  event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const button = $('button[type="submit"]', form); button.disabled = true;
-  try {
-    const session = await identityToken({ grant_type: 'password', username: data.get('email'), password: data.get('password') });
-    state.session = session; writeSession(session); state.user = session.user || await getIdentityUser();
-    await pullUserData(); updateProfileUi(); closeDrawer(); showToast('Giriş başarılı. Çalışmalarınız hesabınızla eşitlendi.');
-  } catch (error) { showToast(readableError(error)); button.disabled = false; }
-}
-
-async function handleRecover() {
-  const emailValue = $('#loginForm input[name="email"]', elements.drawerContent)?.value?.trim();
-  if (!emailValue) { showToast('Önce e-posta adresinizi yazın.'); return; }
-  try {
-    const response = await fetch('/.netlify/identity/recover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailValue }) });
-    if (!response.ok) throw new Error('Şifre yenileme e-postası gönderilemedi.');
-    showToast('Şifre yenileme bağlantısı e-posta adresinize gönderildi.');
-  } catch (error) { showToast(readableError(error)); }
-}
-
-function openAccountPanel() {
-  const profile = readObjectStore(STORE_KEYS.profile);
-  const nick = profile.nick || state.user?.user_metadata?.nick || state.user?.user_metadata?.full_name || '';
-  const fullName = profile.fullName || state.user?.user_metadata?.full_name || '';
-  openDrawer('Hesabım', `
-    <div class="account-card"><strong>${escapeHtml(nick || fullName || 'Planlamasyon Kullanıcısı')}</strong><span>${escapeHtml(state.user?.email || '')}</span></div>
-    <form class="drawer-form" id="accountForm"><div class="field"><label>Nick</label><input name="nick" value="${escapeHtml(nick)}"></div><div class="field"><label>Ad Soyad</label><input name="fullName" value="${escapeHtml(fullName)}"></div><button class="button button-primary" type="submit">Hesap Bilgilerini Kaydet</button></form>
-    <form class="drawer-form" id="passwordForm"><h4>Şifre değiştir</h4><div class="field"><label>Yeni şifre</label><input name="password" type="password" minlength="8" required></div><button class="button button-secondary" type="submit">Şifreyi Değiştir</button></form>`);
-  $('#accountForm', elements.drawerContent).addEventListener('submit', async (event) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget);
-    try {
-      const payload = await identityUserUpdate({ data: { nick: data.get('nick'), full_name: data.get('fullName') } });
-      state.user = payload; writeObjectStore(STORE_KEYS.profile, { nick: String(data.get('nick') || ''), fullName: String(data.get('fullName') || '') });
-      updateProfileUi(); scheduleUserSync(); showToast('Hesap bilgileri güncellendi.');
-    } catch (error) { showToast(readableError(error)); }
+function openLocalProfilePanel() {
+  const profile = sanitizeLocalProfile(readObjectStore(STORE_KEYS.profile));
+  openDrawer('Yerel Profil', `
+    <div class="auth-status local-profile-notice"><strong>Bu bir çevrim içi hesap veya giriş değildir.</strong><br>Yazacağınız ad yalnız bu tarayıcıda görünür. E-posta, şifre ve kimlik bilgisi saklanmaz; başka cihaza otomatik aktarılmaz.</div>
+    <form class="drawer-form" id="localProfileForm">
+      <div class="field"><label for="localProfileNick">Görünen kısa ad</label><input id="localProfileNick" name="nick" maxlength="40" autocomplete="off" value="${escapeHtml(profile.nick)}" placeholder="Örn. Truva AI"></div>
+      <div class="field"><label for="localProfileFullName">Ad soyad (isteğe bağlı)</label><input id="localProfileFullName" name="fullName" maxlength="120" autocomplete="name" value="${escapeHtml(profile.fullName)}"></div>
+      <button class="button button-primary" type="submit">Yerel Profili Kaydet</button>
+      ${(profile.nick || profile.fullName) ? '<button class="button button-danger" id="deleteLocalProfileButton" type="button">Yerel Profili Sil</button>' : ''}
+    </form>
+    <div class="drawer-help local-profile-backup-help">Geçmiş, favori ve taleplerinizi taşımak için <button type="button" class="text-action" id="openLocalDataButton">Yedekle / Geri Yükle</button> bölümünü kullanın.</div>`);
+  $('#localProfileForm', elements.drawerContent)?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const next = sanitizeLocalProfile({ nick: data.get('nick'), fullName: data.get('fullName') });
+    writeObjectStore(STORE_KEYS.profile, next);
+    updateProfileUi(); closeDrawer(); showToast('Yerel profil yalnız bu cihaza kaydedildi.', 'success');
   });
-  $('#passwordForm', elements.drawerContent).addEventListener('submit', async (event) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget);
-    try { await identityUserUpdate({ password: data.get('password') }); event.currentTarget.reset(); showToast('Şifre güncellendi.'); }
-    catch (error) { showToast(readableError(error)); }
+  $('#deleteLocalProfileButton', elements.drawerContent)?.addEventListener('click', () => {
+    if (!window.confirm('Yerel profil adı bu cihazdan silinsin mi? Geçmiş ve favoriler korunur.')) return;
+    writeObjectStore(STORE_KEYS.profile, {}); updateProfileUi(); closeDrawer(); showToast('Yerel profil silindi; geçmiş ve favoriler korundu.');
   });
+  $('#openLocalDataButton', elements.drawerContent)?.addEventListener('click', openLocalDataPanel);
 }
 
-async function logoutIdentity() {
-  clearSession(); state.session = null; state.user = null; updateProfileUi(); closeProfileMenu(); showToast('Çıkış yapıldı. Bu cihazdaki misafir kayıtları korunur.');
+function sanitizeLocalProfile(profile) {
+  const source = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {};
+  return { nick: cleanStoreText(source.nick, 40), fullName: cleanStoreText(source.fullName, 120) };
 }
 
 function updateProfileUi() {
-  const profile = readObjectStore(STORE_KEYS.profile);
-  const name = profile.nick || state.user?.user_metadata?.nick || state.user?.user_metadata?.full_name || '';
-  const emailValue = state.user?.email || '';
-  const logged = Boolean(state.user);
-  elements.profileIdentity.hidden = !logged;
-  elements.profileIdentity.textContent = name || emailValue;
-  elements.profileInitials.hidden = !logged;
-  elements.profileSvg.hidden = logged;
-  elements.profileInitials.textContent = initials(name || emailValue);
-  elements.profileMenuUser.hidden = !logged;
-  elements.profileMenuName.textContent = name || 'Planlamasyon Kullanıcısı';
-  elements.profileMenuEmail.textContent = emailValue;
-  elements.profileAuthButton.textContent = logged ? 'Profilim' : state.identityEnabled ? 'Giriş Yap / Kayıt Ol' : 'Kayıtlar bu cihazda';
-  elements.profileLogoutButton.hidden = !logged;
+  const profile = sanitizeLocalProfile(readObjectStore(STORE_KEYS.profile));
+  const name = profile.nick || profile.fullName;
+  const hasProfile = Boolean(name);
+  elements.profileIdentity.hidden = !hasProfile;
+  elements.profileIdentity.textContent = hasProfile ? `Yerel · ${name}` : '';
+  elements.profileInitials.hidden = !hasProfile;
+  elements.profileSvg.hidden = hasProfile;
+  elements.profileInitials.textContent = initials(name);
+  elements.profileMenuUser.hidden = !hasProfile;
+  elements.profileMenuName.textContent = name || 'Yerel profil oluşturulmadı';
+  elements.profileMenuEmail.textContent = 'Yalnız bu cihazda · giriş yapılmadı';
+  elements.profileAuthButton.textContent = hasProfile ? 'Yerel Profili Düzenle' : 'Yerel Profil Oluştur';
+  elements.profileButton.setAttribute('aria-label', hasProfile ? `${name} yerel profil ve kayıt menüsünü aç` : 'Yerel profil ve kayıt menüsünü aç');
 }
 
-async function getIdentityUser() {
-  let response = await fetch('/.netlify/identity/user', { headers: authHeaders() });
-  if (response.status === 401 && state.session?.refresh_token) {
-    state.session = await identityToken({ grant_type: 'refresh_token', refresh_token: state.session.refresh_token }); writeSession(state.session);
-    response = await fetch('/.netlify/identity/user', { headers: authHeaders() });
+function openLocalDataPanel() {
+  const works = readArrayStore(STORE_KEYS.works);
+  const favorites = readArrayStore(STORE_KEYS.favorites);
+  const requests = readArrayStore(STORE_KEYS.requests);
+  const recovery = readRecoveryStore();
+  openDrawer('Yedekle / Geri Yükle', `
+    <div class="auth-status local-profile-notice"><strong>Veriler yalnız bu cihazdadır.</strong><br>Yedek dosyasını güvenli bir yerde saklayın. Dosya; yerel profil adı, geçmiş, favoriler ve talepleri içerir; şifre içermez.</div>
+    <div class="local-data-counts" aria-label="Yerel kayıt sayıları"><span><strong>${works.length}</strong> geçmiş</span><span><strong>${favorites.length}</strong> favori</span><span><strong>${requests.length}</strong> talep</span></div>
+    <section class="local-data-section" aria-labelledby="backupExportTitle"><h4 id="backupExportTitle">Yedek dışa aktar</h4><p>Okunabilir bir JSON dosyası indirir.</p><button class="button button-primary" id="exportLocalDataButton" type="button">Yedek Dosyasını İndir</button></section>
+    <section class="local-data-section" aria-labelledby="backupImportTitle"><h4 id="backupImportTitle">Yedeği geri yükle</h4><p>Yalnız Planlamasyon'un oluşturduğu, en fazla 2 MB boyutundaki JSON yedekleri kabul edilir.</p>
+      <div class="field"><label for="localImportMode">Geri yükleme şekli</label><select id="localImportMode"><option value="merge">Mevcut kayıtlarla birleştir</option><option value="replace">Bu cihazdaki listelerin yerine koy</option></select></div>
+      <label class="button button-secondary local-file-button" for="localBackupFile">Yedek Dosyası Seç</label><input class="visually-hidden" id="localBackupFile" type="file" accept="application/json,.json">
+    </section>
+    ${recovery.length ? `<section class="local-data-section recovery-section" aria-labelledby="recoveryTitle"><h4 id="recoveryTitle">Bozuk veri kurtarma arşivi</h4><p>${recovery.length} bozuk kayıt alanı güvenli biçimde ayrıldı. Ham veriyi indirip inceleyebilir, ardından arşivi temizleyebilirsiniz.</p><div class="local-data-actions"><button class="button button-secondary" id="downloadRecoveryButton" type="button">Kurtarma Arşivini İndir</button><button class="button button-danger" id="clearRecoveryButton" type="button">Arşivi Temizle</button></div></section>` : ''}
+    <div class="drawer-inline-status" id="localDataStatus" role="status" aria-live="polite" tabindex="-1" hidden></div>`);
+  $('#exportLocalDataButton', elements.drawerContent)?.addEventListener('click', () => {
+    downloadJsonFile(`planlamasyon-yedek-${fileDateStamp()}.json`, buildLocalBackup());
+    setLocalDataStatus('Yedek dosyası hazırlandı. Bu dosyayı güvenli bir yerde saklayın.', 'success');
+  });
+  $('#localBackupFile', elements.drawerContent)?.addEventListener('change', handleLocalBackupImport);
+  $('#downloadRecoveryButton', elements.drawerContent)?.addEventListener('click', () => {
+    downloadJsonFile(`planlamasyon-kurtarma-${fileDateStamp()}.json`, { format: 'planlamasyon-corrupt-recovery', exportedAt: new Date().toISOString(), items: readRecoveryStore() });
+    setLocalDataStatus('Kurtarma arşivi indirildi.', 'success');
+  });
+  $('#clearRecoveryButton', elements.drawerContent)?.addEventListener('click', () => {
+    if (!window.confirm('Bozuk veri kurtarma arşivi bu cihazdan temizlensin mi? Önce indirmeniz önerilir.')) return;
+    try { localStorage.removeItem(STORE_KEYS.recovery); } catch {}
+    openLocalDataPanel(); showToast('Kurtarma arşivi temizlendi.');
+  });
+}
+
+function buildLocalBackup() {
+  return {
+    format: BACKUP_FORMAT,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    storage: 'local-device-only',
+    data: {
+      profile: sanitizeLocalProfile(readObjectStore(STORE_KEYS.profile)),
+      works: readArrayStore(STORE_KEYS.works),
+      favorites: readArrayStore(STORE_KEYS.favorites),
+      requests: readArrayStore(STORE_KEYS.requests)
+    }
+  };
+}
+
+async function handleLocalBackupImport(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > BACKUP_MAX_FILE_BYTES) throw new Error('Yedek dosyası 2 MB sınırını aşıyor.');
+    const raw = await file.text();
+    const payload = JSON.parse(raw);
+    const normalized = normalizeLocalBackup(payload);
+    const mode = $('#localImportMode', elements.drawerContent)?.value === 'replace' ? 'replace' : 'merge';
+    if (mode === 'replace' && !window.confirm('Bu cihazdaki geçmiş, favori ve talepler seçilen yedekle değiştirilsin mi?')) { input.value = ''; return; }
+    const counts = importLocalBackup(normalized, mode);
+    updateSavedCounts(); updateProfileUi();
+    setLocalDataStatus(`${counts.works} geçmiş, ${counts.favorites} favori ve ${counts.requests} talep geri yüklendi. Veriler yalnız bu cihazda tutuluyor.`, 'success');
+    showToast('Yerel yedek başarıyla geri yüklendi.', 'success');
+  } catch (error) {
+    setLocalDataStatus(`Yedek geri yüklenemedi: ${cleanStoreText(error?.message || 'Geçersiz dosya.', 300)}`, 'error');
+    showToast('Yedek dosyası geçersiz veya desteklenmiyor.', 'error');
+  } finally { input.value = ''; }
+}
+
+function normalizeLocalBackup(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Yedek dosyası nesne biçiminde değil.');
+  if (payload.format !== BACKUP_FORMAT || Number(payload.schemaVersion) !== BACKUP_SCHEMA_VERSION) throw new Error('Bu dosya desteklenen Planlamasyon yedeği değil.');
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Yedek veri bölümü bulunamadı.');
+  for (const key of ['works', 'favorites', 'requests']) if (!Array.isArray(data[key])) throw new Error(`Yedekte ${key} listesi eksik veya geçersiz.`);
+  return {
+    profile: sanitizeLocalProfile(data.profile),
+    works: sanitizeStoredCollection(STORE_KEYS.works, Array.isArray(data.works) ? data.works : []),
+    favorites: sanitizeStoredCollection(STORE_KEYS.favorites, Array.isArray(data.favorites) ? data.favorites : []),
+    requests: sanitizeStoredCollection(STORE_KEYS.requests, Array.isArray(data.requests) ? data.requests : [])
+  };
+}
+
+function importLocalBackup(backup, mode = 'merge') {
+  const replace = mode === 'replace';
+  const collections = { works: STORE_KEYS.works, favorites: STORE_KEYS.favorites, requests: STORE_KEYS.requests };
+  const previous = {
+    profile: sanitizeLocalProfile(readObjectStore(STORE_KEYS.profile)),
+    works: readArrayStore(STORE_KEYS.works), favorites: readArrayStore(STORE_KEYS.favorites), requests: readArrayStore(STORE_KEYS.requests)
+  };
+  const counts = {};
+  try {
+    for (const [kind, key] of Object.entries(collections)) {
+      const imported = backup[kind] || [];
+      const next = replace ? imported : mergeCollections(previous[kind], imported);
+      if (!writeArrayStore(key, next)) throw new Error(`${kind} listesi bu cihaza yazılamadı.`);
+      counts[kind] = readArrayStore(key).length;
+    }
+    const nextProfile = replace ? backup.profile : { ...backup.profile, ...previous.profile };
+    if (!writeObjectStore(STORE_KEYS.profile, nextProfile)) throw new Error('Yerel profil bu cihaza yazılamadı.');
+    return counts;
+  } catch (error) {
+    for (const [kind, key] of Object.entries(collections)) writeArrayStore(key, previous[kind]);
+    writeObjectStore(STORE_KEYS.profile, previous.profile);
+    throw error;
   }
-  const payload = await safeJson(response);
-  if (!response.ok) throw new Error(payload?.msg || 'Oturum doğrulanamadı.');
-  return payload;
 }
 
-async function identityToken(values) {
-  const response = await fetch('/.netlify/identity/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values) });
-  const payload = await safeJson(response);
-  if (!response.ok) throw new Error(payload?.error_description || payload?.msg || 'Giriş yapılamadı.');
-  return payload;
+function setLocalDataStatus(message, kind = 'neutral') {
+  const status = $('#localDataStatus', elements.drawerContent);
+  if (!status) return;
+  status.hidden = false; status.className = `drawer-inline-status is-${kind}`; status.textContent = message;
+  status.focus({ preventScroll: false });
 }
 
-async function identityUserUpdate(body) {
-  const response = await fetch('/.netlify/identity/user', { method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const payload = await safeJson(response);
-  if (!response.ok) throw new Error(payload?.msg || 'Hesap güncellenemedi.');
-  return payload;
+function downloadJsonFile(filename, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const cleanFilename = cleanStoreText(filename, 120).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  link.href = url; link.download = cleanFilename.endsWith('.json') ? cleanFilename : `${cleanFilename || 'planlamasyon-yedek'}.json`; link.hidden = true;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function authHeaders() { return state.session?.access_token ? { Authorization: `Bearer ${state.session.access_token}`, Accept: 'application/json' } : { Accept: 'application/json' }; }
-function writeSession(session) { try { localStorage.setItem(STORE_KEYS.session, JSON.stringify(session)); } catch {} }
-function readSession() { try { return JSON.parse(localStorage.getItem(STORE_KEYS.session) || 'null'); } catch { return null; } }
-function clearSession() { try { localStorage.removeItem(STORE_KEYS.session); } catch {} }
-
-async function pullUserData() {
-  if (!state.user || !state.session?.access_token) return;
-  try {
-    const response = await fetch('/api/user-data', { headers: authHeaders() });
-    const payload = await safeJson(response);
-    if (!response.ok || !payload?.ok) throw new Error(payload?.message || 'Hesap verisi alınamadı.');
-    const remote = payload.data || {};
-    writeArrayStore(STORE_KEYS.works, mergeCollections(readArrayStore(STORE_KEYS.works), remote.works || []));
-    writeArrayStore(STORE_KEYS.favorites, mergeCollections(readArrayStore(STORE_KEYS.favorites), remote.favorites || []));
-    writeArrayStore(STORE_KEYS.requests, mergeCollections(readArrayStore(STORE_KEYS.requests), remote.requests || []));
-    writeObjectStore(STORE_KEYS.evidence, { ...(remote.evidence || {}), ...readObjectStore(STORE_KEYS.evidence) });
-    writeObjectStore(STORE_KEYS.profile, { ...(remote.profile || {}), ...readObjectStore(STORE_KEYS.profile) });
-    await pushUserData(); updateProfileUi(); updateSavedCounts();
-  } catch (error) { console.warn('Kullanıcı verisi eşitlenemedi:', error); }
-}
-
-function scheduleUserSync() {
-  if (!state.user || !state.session?.access_token) return;
-  clearTimeout(state.syncTimer); state.syncTimer = setTimeout(() => void pushUserData(), 900);
-}
-
-async function pushUserData() {
-  if (!state.user || !state.session?.access_token || state.syncInProgress) return;
-  state.syncInProgress = true;
-  try {
-    const response = await fetch('/api/user-data', {
-      method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: readObjectStore(STORE_KEYS.profile), works: readArrayStore(STORE_KEYS.works), favorites: readArrayStore(STORE_KEYS.favorites), requests: readArrayStore(STORE_KEYS.requests), evidence: readObjectStore(STORE_KEYS.evidence) })
-    });
-    if (!response.ok) throw new Error('Hesap verisi kaydedilemedi.');
-  } catch (error) { console.warn(error); }
-  finally { state.syncInProgress = false; }
-}
+function fileDateStamp(now = new Date()) { return now.toISOString().slice(0, 10); }
+function scheduleUserSync() {}
 
 function setupFooter() {
   $$('[data-footer-panel]').forEach((button) => button.addEventListener('click', () => {
     const content = {
       about: ['Hakkımızda', 'Planlamasyon; parsel, plan, mevzuat ve çevre verilerini teknik olmayan kullanıcıların anlayacağı şekilde bir araya getirmeyi amaçlayan bir bilgilendirme platformudur.'],
-      contact: ['İletişim', 'İletişim bilgileri sunucu ayarları veya işletme bilgileriyle yayın öncesinde güncellenmelidir. Analiz talepleri Taleplerim bölümünden gönderilebilir.'],
-      privacy: ['Gizlilik', 'Bu yayında çalışmalar, favoriler ve talepler yalnız bu cihazın tarayıcı hafızasında tutulur; başka cihazlara otomatik aktarılmaz. Şifre saklama ve hesap eşitleme sistemi etkin değildir.'],
+      contact: ['İletişim', 'İletişim bilgileri sunucu ayarları veya işletme bilgileriyle yayın öncesinde güncellenmelidir. Analiz talebinin ekibe e-posta ile ulaşıp ulaşmadığı gönderim sonrasında açıkça gösterilir.'],
+      privacy: ['Gizlilik', 'Yerel profil adı, geçmiş sorgular, favoriler ve talepler yalnız bu cihazın tarayıcı hafızasında tutulur; çevrim içi hesap veya otomatik cihaz eşitlemesi yoktur. Tarayıcı verileri silinmeden önce Yedekle / Geri Yükle bölümünden dosya alınabilir. Şifre saklanmaz.'],
       terms: ['Kullanım Koşulları', 'Planlamasyon sonuçları bilgi amaçlıdır. Kesin imar, sınır, aplikasyon, proje ve ruhsat işlemlerinde yetkili kurumların güncel yazılı kayıtları esastır. Bağlantı bulunması otomatik veri kullanım izni anlamına gelmez; ticari kadastro kullanımı için TAKPAS ve ilgili kurum yetkileri gerekir.']
     }[button.dataset.footerPanel];
     openDrawer(content[0], `<div class="footer-copy"><h4>${escapeHtml(content[0])}</h4><p>${escapeHtml(content[1])}</p></div>`);
@@ -2246,7 +2351,6 @@ function isRetryableTkgmError(error) {
 
 async function apiPost(path, body, options = {}) {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  if (options.authenticated && state.session?.access_token) headers.Authorization = `Bearer ${state.session.access_token}`;
   const controller = new AbortController();
   let timedOut = false;
   let timer = null;
@@ -2337,12 +2441,26 @@ function readLegacyArrayStore(key) {
 }
 
 function readArrayStore(key) {
+  let raw = '';
   try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    raw = localStorage.getItem(key) || '';
+    if (!raw) return [];
+    const value = JSON.parse(raw);
     if (Array.isArray(value)) return sanitizeStoredCollection(key, value);
-    if (!value || typeof value !== 'object' || value.schemaVersion !== STORAGE_SCHEMA_VERSION || !Array.isArray(value.items)) return [];
+    if (!value || typeof value !== 'object' || value.schemaVersion !== STORAGE_SCHEMA_VERSION || !Array.isArray(value.items)) {
+      quarantineCorruptStore(key, raw, 'Desteklenmeyen veya eksik veri zarfı');
+      resetCorruptCollection(key);
+      return [];
+    }
     return sanitizeStoredCollection(key, value.items);
-  } catch { return []; }
+  } catch {
+    if (raw) { quarantineCorruptStore(key, raw, 'JSON verisi okunamadı'); resetCorruptCollection(key); }
+    return [];
+  }
+}
+
+function resetCorruptCollection(key) {
+  try { localStorage.setItem(key, storageEnvelopeJson(key, [])); } catch {}
 }
 
 function writeArrayStore(key, value) {
@@ -2466,8 +2584,49 @@ function safeStoredUrl(value) {
   catch { return ''; }
 }
 
-function readObjectStore(key) { try { const value = JSON.parse(localStorage.getItem(key) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { return {}; } }
-function writeObjectStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
+function readObjectStore(key) {
+  let raw = '';
+  try {
+    raw = localStorage.getItem(key) || '';
+    if (!raw) return {};
+    const value = JSON.parse(raw);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    quarantineCorruptStore(key, raw, 'Nesne biçimi bekleniyordu');
+  } catch { if (raw) quarantineCorruptStore(key, raw, 'JSON verisi okunamadı'); }
+  try { localStorage.removeItem(key); } catch {}
+  return {};
+}
+function writeObjectStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } }
+
+function quarantineCorruptStore(key, raw, reason) {
+  if (!raw || key === STORE_KEYS.recovery) return;
+  try {
+    const items = readRecoveryStore();
+    const signature = `${key}:${raw.length}:${raw.slice(0, 80)}:${raw.slice(-80)}`;
+    if (items.some((item) => item.signature === signature)) return;
+    const next = [{
+      signature,
+      key: cleanStoreText(key, 180),
+      capturedAt: new Date().toISOString(),
+      reason: cleanStoreText(reason, 180),
+      truncated: raw.length > RECOVERY_MAX_RAW_CHARS,
+      raw: String(raw).slice(0, RECOVERY_MAX_RAW_CHARS)
+    }, ...items].slice(0, RECOVERY_MAX_ITEMS);
+    localStorage.setItem(STORE_KEYS.recovery, JSON.stringify(next));
+  } catch {}
+}
+
+function readRecoveryStore() {
+  try {
+    const value = JSON.parse(localStorage.getItem(STORE_KEYS.recovery) || '[]');
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, RECOVERY_MAX_ITEMS).map((item) => ({
+      signature: cleanStoreText(item?.signature, 380), key: cleanStoreText(item?.key, 180),
+      capturedAt: safeStoredDate(item?.capturedAt), reason: cleanStoreText(item?.reason, 180),
+      truncated: Boolean(item?.truncated), raw: String(item?.raw || '').slice(0, RECOVERY_MAX_RAW_CHARS)
+    })).filter((item) => item.key && item.raw);
+  } catch { return []; }
+}
 function upsertCollection(key, item, max) { const items = readArrayStore(key); writeArrayStore(key, [item, ...items.filter((entry) => entry.id !== item.id)].slice(0,Math.min(max || 60, STORE_LIMITS[storageKindFromKey(key)] || 60))); }
 function mergeCollections(local, remote) { const map = new Map(); for (const item of [...remote,...local]) if (item?.id && !map.has(item.id)) map.set(item.id,item); return [...map.values()].sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||''))); }
 function initials(value) { const words = String(value || 'P').trim().split(/\s+/).filter(Boolean); return words.slice(0,2).map((word)=>word[0]).join('').toLocaleUpperCase('tr-TR') || 'P'; }
@@ -2479,7 +2638,16 @@ function formatIsoDate(value) {
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
 
-function showToast(message) {
-  clearTimeout(state.toastTimer); elements.toast.textContent = message; elements.toast.classList.add('show');
-  state.toastTimer = setTimeout(() => elements.toast.classList.remove('show'), 4800);
+function showToast(message, kind = 'neutral') {
+  clearTimeout(state.toastTimer);
+  const safeKind = ['success', 'warning', 'error'].includes(kind) ? kind : 'neutral';
+  elements.toast.textContent = message;
+  elements.toast.className = `toast show is-${safeKind}`;
+  elements.toast.setAttribute('role', safeKind === 'error' ? 'alert' : 'status');
+  elements.toast.setAttribute('aria-live', safeKind === 'error' ? 'assertive' : 'polite');
+  state.toastTimer = setTimeout(() => {
+    elements.toast.classList.remove('show');
+    elements.toast.setAttribute('role', 'status');
+    elements.toast.setAttribute('aria-live', 'polite');
+  }, safeKind === 'error' ? 7000 : 4800);
 }

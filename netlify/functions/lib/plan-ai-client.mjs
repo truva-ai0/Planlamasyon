@@ -1,6 +1,13 @@
 import { normalizeZoningFields } from './analysis-core.mjs';
+import {
+  describeSourceFreshness,
+  fetchOfficialResource,
+  isOfficialTurkishHost,
+  readResponseBytesLimited,
+  safePublicHttpsUrl
+} from './official-source-security.mjs';
 
-export const PLAN_AI_VERSION = '3.6.0';
+export const PLAN_AI_VERSION = '3.7.0';
 export const PLAN_AI_MODEL = 'stepfun-ai/step-3.7-flash';
 export const PLAN_AI_ENDPOINT = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const PLAN_AI_STATUS_ENDPOINT = 'https://integrate.api.nvidia.com/v1/status';
@@ -289,6 +296,11 @@ function collectPreloadedEvidence(openSourceScan = {}, expected = {}) {
       id: clean(item?.id || `preloaded-${output.length + 1}`, 180),
       title: clean(item?.title || 'Resmî imar sonucu', 260), provider: clean(item?.provider || 'Yetkili idare', 220),
       url, kind: clean(item?.kind || 'official-evidence', 80), parcelMatch, text,
+      sourceClass: clean(item?.sourceClass || 'open-machine-readable', 80),
+      accessMode: clean(item?.accessMode || 'preloaded-exact-evidence', 80),
+      automationPolicy: clean(item?.automationPolicy || 'already-read', 80),
+      dataClaim: clean(item?.dataClaim || 'read-and-parcel-matched', 120),
+      freshness: item?.freshness || describeSourceFreshness(item),
       trust: trustedEvidenceTrust(item?.trust),
       currentness: trustedEvidenceCurrentness(item),
       retrievedAt: item?.retrievedAt || new Date().toISOString()
@@ -297,17 +309,55 @@ function collectPreloadedEvidence(openSourceScan = {}, expected = {}) {
   return dedupeEvidence(output).slice(0, 6);
 }
 
+function canAutomaticallyReadEvidence(item = {}, url) {
+  const accessMode = normalizeKey(item?.accessMode);
+  const sourceClass = normalizeKey(item?.sourceClass);
+  const automationPolicy = normalizeKey(item?.automationPolicy);
+  const kind = normalizeKey(item?.kind);
+  const deniedModes = new Set([
+    'publicportal', 'publicmanual', 'manualonly', 'officialloginservice', 'officialsearch',
+    'configurednotauthorized', 'discoveryonly', 'authenticated', 'loginrequired'
+  ]);
+  if (deniedModes.has(accessMode) || ['publicmanual', 'authenticated', 'discovery'].includes(sourceClass)) return false;
+
+  const authorizedAdapter = (accessMode === 'authorizedadapter' || sourceClass === 'authorizedadapter')
+    && item?.authorized === true && item?.automatedQueryAllowed === true;
+  if (authorizedAdapter) return true;
+
+  const readOnlyResult = accessMode === 'readonlyresult'
+    && item?.readOnlyResult === true && item?.machineReadableCandidate === true;
+  if (readOnlyResult) return true;
+
+  const openMachineReadable = sourceClass === 'openmachinereadable'
+    || ['openmachinereadable', 'publicmachinereadable', 'opendata'].includes(accessMode)
+    || ['readonly', 'openmachinereadable'].includes(automationPolicy);
+  if (openMachineReadable) return true;
+
+  // Resmî kurumun statik belge sayfası salt GET ile okunabilir; portal/form sayfası bu yola giremez.
+  const staticOfficialDocument = ['document', 'officialdocument', 'officialplandocument', 'pdf', 'plandocument'].includes(kind)
+    && isOfficialTurkishHost(new URL(url).hostname);
+  return staticOfficialDocument;
+}
+
 function collectCandidateSources({ providerDiscovery = {}, planContext = {}, openSourceScan = {} }) {
   const list = [];
   const push = (item, priority = 0) => {
     const url = safePublicUrl(item?.url || item?.endpoint || item?.sourceUrl);
-    if (!url || isLoginOnly(url, item)) return;
+    if (!url || isLoginOnly(url, item) || !canAutomaticallyReadEvidence(item, url)) return;
     list.push({
       id: clean(item?.id || item?.title || url, 180) || url,
       title: clean(item?.title || item?.label || 'Resmî açık kaynak', 260) || 'Resmî açık kaynak',
       provider: clean(item?.provider || item?.authority || 'Resmî kurum', 220) || 'Resmî kurum',
       url,
       kind: clean(item?.kind || 'portal', 80) || 'portal',
+      sourceClass: clean(item?.sourceClass, 80),
+      accessMode: clean(item?.accessMode, 80),
+      automationPolicy: clean(item?.automationPolicy, 80),
+      dataClaim: clean(item?.dataClaim, 120) || 'eligible-for-read',
+      freshness: item?.freshness || describeSourceFreshness(item),
+      documentDate: item?.documentDate || null,
+      verifiedAt: item?.verifiedAt || null,
+      retrievedAt: item?.retrievedAt || null,
       trust: trustedEvidenceTrust(item?.trust),
       currentness: trustedEvidenceCurrentness(item),
       priority: Number(priority || item?.priority || 0)
@@ -335,26 +385,19 @@ function collectCandidateSources({ providerDiscovery = {}, planContext = {}, ope
 }
 
 async function fetchEvidence(candidate, { fetchImpl, timeoutMs, expected }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(candidate.url, {
-      redirect: 'follow',
+    const response = await fetchOfficialResource(candidate.url, {
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com; Plan-AI-public-source-reader)'
-      },
-      signal: controller.signal
-    });
+        'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; Plan-AI-official-source-reader)'
+      }
+    }, { fetchImpl, timeoutMs, retryCount: 1, maxRedirects: 2, maxResponseBytes: 5 * 1024 * 1024 });
     if ([401,403].includes(response.status)) return { status: 'login-or-blocked', message: `Kaynak ${response.status} yanıtı verdi.`, evidence: [] };
     if (!response.ok) return { status: 'http-error', message: `Kaynak ${response.status} yanıtı verdi.`, evidence: [] };
-    const finalUrl = safePublicUrl(response.url || candidate.url) || candidate.url;
+    const finalUrl = safePublicUrl(response.officialFinalUrl || response.url || candidate.url) || candidate.url;
     const mime = String(response.headers.get('content-type') || '').split(';')[0].toLowerCase();
-    const declared = Number(response.headers.get('content-length') || 0);
-    if (declared > 5 * 1024 * 1024) return { status: 'too-large', message: 'Kaynak 5 MB sınırını aşıyor.', evidence: [] };
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > 5 * 1024 * 1024) return { status: 'too-large', message: 'Kaynak 5 MB sınırını aşıyor.', evidence: [] };
+    const bytes = await readResponseBytesLimited(response, 5 * 1024 * 1024);
 
     if (mime === 'application/pdf' || looksLikePdf(bytes, finalUrl)) {
       const text = await extractPdfText(bytes);
@@ -385,21 +428,19 @@ async function fetchEvidence(candidate, { fetchImpl, timeoutMs, expected }) {
     return { status: 'unsupported', message: `Kaynak türü (${mime || 'bilinmiyor'}) Plan AI metin taramasına uygun değil.`, evidence: [] };
   } catch (error) {
     if (error?.name === 'AbortError') return { status: 'timeout', message: 'Kaynak zaman aşımına uğradı.', evidence: [] };
+    if (error?.code === 'SOURCE_RESPONSE_TOO_LARGE') return { status: 'too-large', message: 'Kaynak 5 MB sınırını aşıyor.', evidence: [] };
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
 async function fetchLinkedDocument(url, { fetchImpl, timeoutMs, expected, parent }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(url, { redirect: 'follow', headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)' }, signal: controller.signal });
+    const response = await fetchOfficialResource(url, {
+      headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; Plan-AI-linked-official-document)' }
+    }, { fetchImpl, timeoutMs, retryCount: 1, maxRedirects: 2, maxResponseBytes: 5 * 1024 * 1024 });
     if (!response.ok) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > 5 * 1024 * 1024) return null;
-    const finalUrl = safePublicUrl(response.url || url) || url;
+    const bytes = await readResponseBytesLimited(response, 5 * 1024 * 1024);
+    const finalUrl = safePublicUrl(response.officialFinalUrl || response.url || url) || url;
     const mime = String(response.headers.get('content-type') || '').split(';')[0].toLowerCase();
     let text = '';
     let kind = 'text';
@@ -408,7 +449,10 @@ async function fetchLinkedDocument(url, { fetchImpl, timeoutMs, expected, parent
     text = cleanEvidenceText(text);
     if (!text) return null;
     return makeEvidence({ ...parent, title: `${parent.title} · bağlı belge` }, finalUrl, text, kind, expected);
-  } finally { clearTimeout(timer); }
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.code === 'SOURCE_RESPONSE_TOO_LARGE') return null;
+    throw error;
+  }
 }
 
 async function extractPdfText(buffer) {
@@ -436,6 +480,11 @@ function makeEvidence(candidate, url, text, kind, expected) {
     url,
     kind,
     sourceKind: candidate.kind,
+    sourceClass: candidate.sourceClass || 'open-machine-readable',
+    accessMode: candidate.accessMode || 'read-only-document',
+    automationPolicy: candidate.automationPolicy || 'read-only',
+    dataClaim: match ? 'read-and-parcel-matched' : 'read-not-parcel-matched',
+    freshness: candidate.freshness || describeSourceFreshness(candidate),
     trust: candidate.trust,
     currentness: candidate.currentness,
     parcelMatch: match ? 'exact' : 'unverified',
@@ -569,9 +618,9 @@ function extractOfficialDocumentLinks(html, baseUrl) {
   let match;
   while ((match = pattern.exec(String(html || '')))) {
     try {
-      const url = new URL(match[1], baseUrl);
-      if (url.protocol !== 'https:' || isPrivateHost(url.hostname)) continue;
-      const value = url.toString();
+      const value = safePublicUrl(new URL(match[1], baseUrl).toString());
+      if (!value) continue;
+      const url = new URL(value);
       if (!/\.pdf(?:$|\?)/i.test(value) && !/(?:plan.?not|imar|plan|rapor|aciklama|açıklama)/i.test(value)) continue;
       if (!sameOfficialFamily(new URL(baseUrl), url)) continue;
       links.push(value);
@@ -587,7 +636,11 @@ function sameOfficialFamily(a, b) {
 }
 
 function publicEvidenceSummary(item) {
-  return { id: item.id, title: item.title, provider: item.provider, url: item.url, kind: item.kind, parcelMatch: item.parcelMatch, currentness: sourceEvidenceCurrentness(item), characterCount: item.text.length };
+  return {
+    id: item.id, title: item.title, provider: item.provider, url: item.url, kind: item.kind,
+    sourceClass: item.sourceClass || null, dataClaim: item.dataClaim || null, freshness: item.freshness || null,
+    parcelMatch: item.parcelMatch, currentness: sourceEvidenceCurrentness(item), characterCount: item.text.length
+  };
 }
 
 function compactAnalysis(analysis = {}) {
@@ -980,20 +1033,7 @@ function parseModelJson(text) {
   return null;
 }
 function safePublicUrl(value) {
-  if (!value) return null;
-  try {
-    const url = new URL(String(value));
-    if (url.protocol !== 'https:' || url.username || url.password || isPrivateHost(url.hostname)) return null;
-    return url.toString();
-  } catch { return null; }
-}
-function isPrivateHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return true;
-  const match = host.match(/^172\.(\d+)\./);
-  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return true;
-  return host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:');
+  return safePublicHttpsUrl(value);
 }
 function isLoginOnly(url, item) { return /(?:^|\.)turkiye\.gov\.tr$/i.test(new URL(url).hostname) || item?.accessMode === 'official-login-service'; }
 function looksLikePdf(bytes, url) { return (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) || /\.pdf(?:$|\?)/i.test(url); }

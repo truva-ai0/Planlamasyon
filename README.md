@@ -1,4 +1,24 @@
-# Planlamasyon v3.6.0 — Kanıtlı Hesap ve Müşteri Raporu
+# Planlamasyon v3.7.0 — Güvenli Resmî Kaynak ve Taşınabilir Müşteri Kaydı
+
+## v3.7.0 yenilikleri
+
+- Belge okuyucu; OCR kaynaklı `O/0`, `l/1`, parçalanmış etiket ve sayı bozulmalarını kontrollü biçimde düzeltir. Koşullu veya aralıklı TAKS/KAKS, yol genişliğine bağlı çekmeler ve sağ/sol cephe değerleri tek bir kesin sayıya indirgenmeden kanıtlarıyla korunur.
+- İptal edilmiş, eski, taslak, öneri veya temsili yapılaşma değerleri hesaba alınmaz. Düşük güvenli ya da ada/parseli eşleşmeyen TAKS, emsal, kat ve diğer kritik alanlardan sonuç üretilmez.
+- Ön, yan ve arka bahçe alanı yalnız resmî belgede açıkça `m²` olarak yazıyorsa gösterilir. Çekme mesafesinden bahçe alanı tahmin edilmez; her değer kaynak, alıntı, belge tarihi ve güven iziyle taşınır.
+- Resmî kaynak istemcisi HTTPS, kullanıcı bilgisi, özel port, sayısal/özel IP, yerel DNS, kötü yönlendirme, yanıt boyutu, ortak zaman aşımı ve tekrar sınırlarıyla güçlendirildi. Yetkisiz veya yalnız manuel kullanılabilen portal açık kaynak tarayıcısı ve Plan AI tarafından indirilmez.
+- Erişim tarihi artık belge güncellik kanıtı gibi sunulmaz. Belge tarihi, bağlantı doğrulama tarihi ve erişim tarihi ayrı alanlardır; belge tarihi bilinmiyorsa güncellik de “bilinmiyor” olarak kalır.
+- Çalışmalarım, Favorilerim ve Taleplerim için doğrulanan JSON yedekleme ve geri yükleme eklendi. Bozuk tarayıcı verileri sınırlı kurtarma arşivine alınır; yerel profil şifre saklamaz ve çevrim içi hesap gibi gösterilmez.
+- Analiz talebi gerçekten ekibe iletilmediyse “gönderildi” denmez. İsteklerde içerik türü, gövde boyutu, origin ve hız sınırı uygulanır; API yanıtları ek güvenlik başlıkları taşır.
+- Yan panel klavye odağı, Escape/ok tuşları, dokunma hedefleri, uzun metin taşması ve azaltılmış hareket desteği iyileştirildi. Rapor, kadastro kaydı ile doğrulanmış imar alanlarını ve yalnız teorik hesapları ayrı gösterir.
+
+## Dağıtım
+
+- Üretim adresi: `https://planlamasyon.truvaai0.workers.dev/`
+- Cloudflare üretim dağıtımı GitHub `main` dalını izler.
+
+> Bu sürüm resmî kurum izni veya kapalı belediye/e-Devlet verisine erişim sağlamaz. Planlamasyon bir imar durumu, ruhsat veya yapı hakkı belgesi üretmez; bağlayıcı işlemde yetkili idarenin güncel, yazılı ve parsele özel kaydı esastır.
+
+# Önceki sürüm: Planlamasyon v3.6.0 — Kanıtlı Hesap ve Müşteri Raporu
 
 ## v3.6.0 yenilikleri
 

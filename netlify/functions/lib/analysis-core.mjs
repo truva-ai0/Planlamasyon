@@ -25,17 +25,19 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
   const zoningStatus = zoning?.status || 'unavailable';
   const calculationsAllowed = ['verified', 'user-evidence', 'ai-assisted-official'].includes(zoningStatus) && zoning?.conflict !== true;
   const fields = normalizeZoningFields(zoning?.fields || {});
-  const netParcelAreaCandidate = calculationsAllowed ? finitePositive(fields.netParcelArea) : null;
+  const fieldExclusionReasons = Object.fromEntries(['netParcelArea', 'taks', 'emsal', 'floors', 'hmax'].map((field) => [field, calculationFieldExclusionReason(zoning, field)]).filter(([, reason]) => reason));
+  const excludedFields = Object.keys(fieldExclusionReasons);
+  const netParcelAreaCandidate = calculationsAllowed && !fieldExclusionReasons.netParcelArea ? finitePositive(fields.netParcelArea) : null;
   const netParcelAreaPlausible = netParcelAreaCandidate == null || parcelArea == null || netParcelAreaCandidate <= parcelArea * 1.05;
   const verifiedNetParcelArea = netParcelAreaPlausible ? netParcelAreaCandidate : null;
   const calculationArea = verifiedNetParcelArea ?? parcelArea;
   const calculationAreaKind = verifiedNetParcelArea != null ? 'net-imar-parseli-alani' : 'kadastro-parsel-alani';
   const calculationAreaLabel = verifiedNetParcelArea != null ? 'Doğrulanmış net imar parseli alanı' : 'Kadastro parsel alanı';
 
-  const taks = calculationsAllowed ? ratio(fields.taks, 1) : null;
-  const emsal = calculationsAllowed ? ratio(fields.emsal, 15) : null;
-  const floors = calculationsAllowed ? integer(fields.floors, 1, 150) : null;
-  const hmax = calculationsAllowed ? finitePositive(fields.hmax) : null;
+  const taks = calculationsAllowed && !fieldExclusionReasons.taks ? ratio(fields.taks, 1) : null;
+  const emsal = calculationsAllowed && !fieldExclusionReasons.emsal ? ratio(fields.emsal, 15) : null;
+  const floors = calculationsAllowed && !fieldExclusionReasons.floors ? integer(fields.floors, 1, 150) : null;
+  const hmax = calculationsAllowed && !fieldExclusionReasons.hmax ? finitePositive(fields.hmax) : null;
   const footprint = calculationArea != null && taks != null ? round2(calculationArea * taks) : null;
   const construction = calculationArea != null && emsal != null ? round2(calculationArea * emsal) : null;
   const outside = calculationArea != null && footprint != null ? round2(Math.max(0, calculationArea - footprint)) : null;
@@ -47,6 +49,8 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
     netParcelArea: verifiedNetParcelArea,
     netParcelAreaCandidate,
     netParcelAreaRejected: netParcelAreaCandidate != null && !netParcelAreaPlausible,
+    excludedFields,
+    fieldExclusionReasons,
     sourceField: verifiedNetParcelArea != null ? 'netParcelArea' : 'parcel.area',
     fallbackUsed: verifiedNetParcelArea == null && parcelArea != null,
     fallbackReason: verifiedNetParcelArea != null
@@ -64,7 +68,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
   };
 
   const possibilities = buildPossibilities(fields, { parcelArea, outside, floors });
-  const missing = missingFields(fields, calculationsAllowed);
+  const missing = missingFields(fields, calculationsAllowed, new Set(excludedFields));
   const warnings = buildWarnings({ zoning, fields, missing, environment, calculationBasis });
   const explanation = buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing, calculationBasis });
   const technical = buildTechnical(properties, fields, zoning);
@@ -85,7 +89,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
         : 'cadastral-only';
 
   return {
-    version: '3.6.0',
+    version: '3.7.0',
     status,
     zoningStatus,
     calculatedAt: new Date().toISOString(),
@@ -132,6 +136,7 @@ export function normalizeZoningFields(input = {}) {
   const setbacks = input.setbacks || {};
   const allowances = input.allowances || {};
   const setbackConditions = normalizeSetbackConditions(input.setbackConditions);
+  const conditionalFields = normalizeConditionalFields(input.conditionalFields);
   return {
     landUse: clean(input.landUse, 180),
     netParcelArea: finitePositive(input.netParcelArea),
@@ -144,6 +149,10 @@ export function normalizeZoningFields(input = {}) {
     sideSetback: normalizeSetbackScalar(input.sideSetback ?? setbacks.side, setbackConditions, 'side'),
     rearSetback: normalizeSetbackScalar(input.rearSetback ?? setbacks.rear, setbackConditions, 'rear'),
     setbackConditions,
+    conditionalFields,
+    frontGardenArea: finiteNonNegative(input.frontGardenArea),
+    sideGardenArea: finiteNonNegative(input.sideGardenArea),
+    rearGardenArea: finiteNonNegative(input.rearGardenArea),
     planName: clean(input.planName, 300),
     planNumber: clean(input.planNumber, 120),
     planScale: clean(input.planScale, 80),
@@ -161,7 +170,7 @@ export function normalizeZoningFields(input = {}) {
 export function compareZoningRecords(records) {
   const valid = records.filter((record) => record && record.fields);
   if (valid.length < 2) return { conflict: false, fields: [] };
-  const fields = ['landUse', 'netParcelArea', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
+  const fields = ['landUse', 'netParcelArea', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'];
   const conflicts = [];
   for (const field of fields) {
     const values = valid.map((record) => comparable(record.fields[field])).filter((value) => value != null);
@@ -261,6 +270,17 @@ function buildWarnings({ zoning, fields, missing, environment, calculationBasis 
   if (fields.floodDataStatus === 'unknown') warnings.push({ level: 'info', text: 'Taşkın durumuyla ilgili yeterli doğrulanmış veri bulunamadı.' });
   if (calculationBasis?.netParcelAreaRejected) warnings.push({ level: 'danger', text: 'Belgedeki net imar parseli alanı kadastro alanından belirgin biçimde büyük göründüğü için otomatik hesapta kullanılmadı; alanları yetkili idare belgesinden karşılaştırın.' });
   else if (calculationBasis?.fallbackUsed && [fields.taks, fields.emsal].some((value) => value != null)) warnings.push({ level: 'info', text: 'Net imar parseli alanı doğrulanamadığından teorik hesaplarda kadastro parsel alanı kullanıldı; yol terki veya düzenleme sonrası sonuç değişebilir.' });
+  const excluded = calculationBasis?.fieldExclusionReasons || {};
+  for (const [field, reason] of Object.entries(excluded)) {
+    warnings.push({
+      level: 'warning',
+      text: reason === 'low-confidence'
+        ? `${humanField(field)} düşük okuma güveni nedeniyle otomatik hesapta kullanılmadı.`
+        : `${humanField(field)} kaynak-parsel eşleşmesi doğrulanmadığı için otomatik hesapta kullanılmadı.`
+    });
+  }
+  const conditionalLabels = Object.entries(fields.conditionalFields || {}).filter(([, items]) => Array.isArray(items) && items.length).map(([field]) => humanField(field));
+  if (conditionalLabels.length) warnings.push({ level: 'warning', text: `${conditionalLabels.join(', ')} için koşullu değerler bulundu; hangi koşulun parsele uygulandığı doğrulanmadan tek bir değer seçilmedi ve hesap yapılmadı.` });
   for (const constraint of fields.constraints || []) warnings.push({ level: 'warning', text: constraint });
   if (missing.length) warnings.push({ level: 'info', text: `Eksik imar verileri nedeniyle bazı sonuçlar hesaplanmadı: ${missing.map(humanField).join(', ')}.` });
   if (zoning?.sourceScan?.exhausted) {
@@ -328,6 +348,10 @@ function buildTechnical(properties, fields, zoning) {
     ['Yan bahçe / yapı yaklaşma', fields.sideSetback != null ? formatMeters(fields.sideSetback) : null, zoningFieldSourceLabel(zoning, 'sideSetback')],
     ['Arka bahçe / yapı yaklaşma', fields.rearSetback != null ? formatMeters(fields.rearSetback) : null, zoningFieldSourceLabel(zoning, 'rearSetback')],
     ['Cepheye / koşula göre çekme mesafeleri', formatSetbackConditions(fields.setbackConditions), zoningFieldSourceLabel(zoning, 'setbackConditions')],
+    ['Belgede yazan ön bahçe alanı', formatArea(fields.frontGardenArea), zoningFieldSourceLabel(zoning, 'frontGardenArea')],
+    ['Belgede yazan yan bahçe alanı', formatArea(fields.sideGardenArea), zoningFieldSourceLabel(zoning, 'sideGardenArea')],
+    ['Belgede yazan arka bahçe alanı', formatArea(fields.rearGardenArea), zoningFieldSourceLabel(zoning, 'rearGardenArea')],
+    ['Koşullu yapılaşma değerleri', formatConditionalFields(fields.conditionalFields), zoningFieldSourceLabel(zoning, 'conditionalFields')],
     ['Plan adı', fields.planName, zoningFieldSourceLabel(zoning, 'planName')],
     ['Plan işlem / karar no', fields.planNumber, zoningFieldSourceLabel(zoning, 'planNumber')],
     ['Plan ölçeği', fields.planScale, zoningFieldSourceLabel(zoning, 'planScale')],
@@ -357,7 +381,11 @@ function buildClaims({ parcel, zoning, environment, metrics, calculationBasis })
     ['Ön bahçe / yapı yaklaşma', zoning?.fields?.frontSetback != null ? formatMeters(zoning.fields.frontSetback) : null, 'frontSetback'],
     ['Yan bahçe / yapı yaklaşma', zoning?.fields?.sideSetback != null ? formatMeters(zoning.fields.sideSetback) : null, 'sideSetback'],
     ['Arka bahçe / yapı yaklaşma', zoning?.fields?.rearSetback != null ? formatMeters(zoning.fields.rearSetback) : null, 'rearSetback'],
-    ['Cepheye / koşula göre çekme mesafeleri', formatSetbackConditions(zoning?.fields?.setbackConditions), 'setbackConditions']
+    ['Cepheye / koşula göre çekme mesafeleri', formatSetbackConditions(zoning?.fields?.setbackConditions), 'setbackConditions'],
+    ['Belgede yazan ön bahçe alanı', formatArea(zoning?.fields?.frontGardenArea), 'frontGardenArea'],
+    ['Belgede yazan yan bahçe alanı', formatArea(zoning?.fields?.sideGardenArea), 'sideGardenArea'],
+    ['Belgede yazan arka bahçe alanı', formatArea(zoning?.fields?.rearGardenArea), 'rearGardenArea'],
+    ['Koşullu yapılaşma değerleri', formatConditionalFields(zoning?.fields?.conditionalFields), 'conditionalFields']
   ];
   for (const [claim, value, field] of fieldClaimMap) {
     if (value != null) claims.push({ claim, value: String(value), sourceId: zoningFieldSourceId(zoning, field), confidence: zoning.status });
@@ -403,11 +431,12 @@ function buildClaims({ parcel, zoning, environment, metrics, calculationBasis })
   return claims;
 }
 
-function missingFields(fields, allowed) {
+function missingFields(fields, allowed, excluded = new Set()) {
   const required = ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'];
   if (!allowed) return required;
   const conditionTypeByField = { frontSetback: 'front', sideSetback: 'side', rearSetback: 'rear' };
   return required.filter((field) => {
+    if (excluded.has(field)) return true;
     if (fields[field] != null && fields[field] !== '') return false;
     const type = conditionTypeByField[field];
     return !type || !fields.setbackConditions?.some((item) => item.type === type && finiteNonNegative(item.value) != null);
@@ -485,6 +514,56 @@ function zoningFieldSourceLabel(zoning, field) {
 
 function zoningFieldSourceId(zoning, field) {
   return zoning?.fieldSources?.[field]?.id || zoning?.sources?.[0]?.id || null;
+}
+
+function calculationFieldExclusionReason(zoning, field) {
+  const source = zoning?.fieldSources?.[field];
+  if (!source || typeof source !== 'object') return null;
+  const parcelMatchStatus = String(source.parcelMatchStatus || '').toLowerCase();
+  const confidence = String(source.confidence || source.extractionConfidence || '').toLowerCase();
+  if (parcelMatchStatus === 'mismatch') return 'parcel-mismatch';
+  if (confidence === 'low') return 'low-confidence';
+  return null;
+}
+
+function normalizeConditionalFields(value) {
+  let input = value;
+  if (typeof input === 'string') {
+    try { input = JSON.parse(input); } catch { input = {}; }
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const output = {};
+  for (const [field, max] of [['taks', 1], ['emsal', 15], ['floors', 150], ['hmax', 1000]]) {
+    if (!Array.isArray(input[field])) continue;
+    const items = [];
+    const seen = new Set();
+    for (const item of input[field].slice(0, 30)) {
+      if (!item || typeof item !== 'object') continue;
+      const number = Number(item.value);
+      if (!Number.isFinite(number) || number < 0 || number > max || (field === 'floors' && !Number.isInteger(number))) continue;
+      const qualifier = clean(item.qualifier, 180);
+      const key = `${qualifier?.toLocaleLowerCase('tr-TR') || ''}|${number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({
+        field,
+        qualifier,
+        value: number,
+        unit: field === 'floors' ? 'kat' : field === 'hmax' ? 'm' : 'ratio',
+        excerpt: clean(item.excerpt, 520),
+        confidence: enumValue(item.confidence, ['high', 'medium', 'low']),
+        method: clean(item.method, 120),
+        sourceTitle: clean(item.sourceTitle, 280),
+        sourceUrl: safeHttps(item.sourceUrl),
+        documentDate: isoDate(item.documentDate),
+        retrievedAt: isoTimestamp(item.retrievedAt),
+        parserVersion: clean(item.parserVersion, 80),
+        parcelMatchStatus: enumValue(item.parcelMatchStatus, ['exact', 'unverified', 'mismatch'])
+      });
+    }
+    if (items.length) output[field] = items;
+  }
+  return output;
 }
 
 function normalizeSetbackConditions(value) {
@@ -573,6 +652,19 @@ function formatSetbackConditions(conditions) {
   }).join(' | ');
 }
 
+function formatConditionalFields(fields) {
+  if (!fields || typeof fields !== 'object') return null;
+  const labels = { taks: 'TAKS', emsal: 'Emsal', floors: 'Kat', hmax: 'Yençok/Hmax' };
+  const items = [];
+  for (const [field, values] of Object.entries(fields)) {
+    for (const item of Array.isArray(values) ? values : []) {
+      const value = field === 'floors' ? `${item.value} kat` : field === 'hmax' ? formatMeters(item.value) : formatRatio(item.value);
+      items.push(`${labels[field] || field}${item.qualifier ? ` · ${item.qualifier}` : ''}: ${value}`);
+    }
+  }
+  return items.length ? items.join(' | ') : null;
+}
+
 function normalizePossibility(value) {
   const text = String(value ?? 'unknown').toLowerCase().trim();
   if (['allowed', 'yes', 'true', 'yapılabilir', 'uygun'].includes(text)) return 'allowed';
@@ -583,7 +675,7 @@ function normalizePossibility(value) {
 }
 
 function humanField(field) {
-  return ({ landUse: 'plan fonksiyonu', netParcelArea: 'net imar parseli alanı', taks: 'TAKS', emsal: 'emsal', floors: 'kat adedi', hmax: 'Yençok/Hmax', buildingOrder: 'yapı nizamı', frontSetback: 'ön bahçe mesafesi', sideSetback: 'yan bahçe mesafesi', rearSetback: 'arka bahçe mesafesi', setbackConditions: 'cepheye göre çekme mesafeleri' })[field] || field;
+  return ({ landUse: 'plan fonksiyonu', netParcelArea: 'net imar parseli alanı', taks: 'TAKS', emsal: 'emsal', floors: 'kat adedi', hmax: 'Yençok/Hmax', buildingOrder: 'yapı nizamı', frontSetback: 'ön bahçe mesafesi', sideSetback: 'yan bahçe mesafesi', rearSetback: 'arka bahçe mesafesi', setbackConditions: 'cepheye göre çekme mesafeleri', conditionalFields: 'koşullu yapılaşma değerleri', frontGardenArea: 'ön bahçe alanı', sideGardenArea: 'yan bahçe alanı', rearGardenArea: 'arka bahçe alanı' })[field] || field;
 }
 
 function formatRecordScale(record) {

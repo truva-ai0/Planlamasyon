@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet" href="/styles.css?v=3.6.0">
+  <link rel="stylesheet" href="/styles.css?v=3.7.0">
   <script>
     (() => {
       let theme = 'dark';
@@ -39,18 +39,18 @@
         </button>
         <span class="profile-identity" id="profileIdentity" hidden></span>
         <div class="profile-wrap">
-          <button class="profile-button" id="profileButton" type="button" aria-label="Profil menüsünü aç" aria-expanded="false">
+          <button class="profile-button" id="profileButton" type="button" aria-label="Yerel profil ve kayıt menüsünü aç" aria-expanded="false" aria-controls="profileMenu">
             <span class="profile-initials" id="profileInitials" hidden></span>
             <svg id="profileSvg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M4.8 21c.45-4.25 3.15-6.5 7.2-6.5s6.75 2.25 7.2 6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
           </button>
           <div class="profile-menu" id="profileMenu" hidden>
-            <div class="profile-menu-user" id="profileMenuUser" hidden><strong id="profileMenuName">—</strong><span id="profileMenuEmail">—</span></div>
-            <button data-panel="auth" id="profileAuthButton">Giriş Yap / Kayıt Ol</button>
+            <div class="device-storage-label"><strong>Yerel kayıt</strong><span>Çevrim içi hesap değildir</span></div>
+            <div class="profile-menu-user" id="profileMenuUser" hidden><strong id="profileMenuName">—</strong><span id="profileMenuEmail">Yalnız bu cihazda</span></div>
+            <button data-panel="auth" id="profileAuthButton">Yerel Profil</button>
             <button data-panel="works" aria-label="Geçmiş sorgularımı aç"><span>Geçmiş Sorgularım</span><span class="profile-count" id="worksCount">0</span></button>
             <button data-panel="favorites" aria-label="Favorilerimi aç"><span>Favorilerim</span><span class="profile-count" id="favoritesCount">0</span></button>
-            <button data-panel="requests">Taleplerim</button>
-            <button data-panel="account">Hesabım</button>
-            <button class="danger" data-panel="logout" id="profileLogoutButton" hidden>Çıkış</button>
+            <button data-panel="requests" aria-label="Yerel analiz taleplerimi aç"><span>Taleplerim</span><span class="profile-count" id="requestsCount">0</span></button>
+            <button data-panel="data">Yedekle / Geri Yükle</button>
           </div>
         </div>
       </div>
@@ -67,7 +67,7 @@
         <p>Parselinizi bulun. Planlamasyon kadastro, doğrulanabilen plan bilgileri, mevzuat ve yakın çevre verilerini tek sonuçta toplasın.</p>
         <div class="hero-actions">
           <button class="button button-primary" id="startButton" type="button">Projeni Başlat <span aria-hidden="true">→</span></button>
-          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.6</small></button>
+          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.7</small></button>
         </div>
         <div class="trust-row">
           <span>✓ Kaynak–sonuç ilişkisi</span>
@@ -303,7 +303,7 @@
     </section>
 
     <footer class="site-footer">
-      <span>© 2026 PLANLAMASYON · v3.6.0</span>
+      <span>© 2026 PLANLAMASYON · v3.7.0</span>
       <nav><button data-footer-panel="about">Hakkımızda</button><button data-footer-panel="contact">İletişim</button><button data-footer-panel="privacy">Gizlilik</button><button data-footer-panel="terms">Kullanım Koşulları</button></nav>
     </footer>
   </main>
@@ -311,7 +311,7 @@
   <section class="print-report" id="printReport" aria-hidden="true"></section>
 
   <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
-  <aside class="side-drawer" id="sideDrawer" hidden role="dialog" aria-modal="true" aria-label="Planlamasyon paneli">
+  <aside class="side-drawer" id="sideDrawer" hidden role="dialog" aria-modal="true" aria-labelledby="drawerTitle" tabindex="-1">
     <div class="drawer-head"><h3 id="drawerTitle">Panel</h3><button id="drawerClose" class="profile-button" type="button" aria-label="Paneli kapat">×</button></div>
     <div class="drawer-content" id="drawerContent"></div>
   </aside>
@@ -319,6 +319,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="/app.js?v=3.6.0"></script>
+  <script type="module" src="/app.js?v=3.7.0"></script>
 </body>
 </html>

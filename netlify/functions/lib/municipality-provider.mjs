@@ -3,6 +3,14 @@ import {
   MUNICIPALITY_CATALOG_STATS,
   MUNICIPALITY_CATALOG_VERSION
 } from './municipality-catalog.mjs';
+import {
+  describeSourceFreshness,
+  fetchOfficialResource,
+  hostMatchesAllowlist,
+  isOfficialTurkishHost,
+  readResponseTextLimited,
+  safePublicHttpsUrl
+} from './official-source-security.mjs';
 
 const CACHE = globalThis.__PLANLAMASYON_MUNICIPALITY_PROVIDER_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_MUNICIPALITY_PROVIDER_CACHE__ = CACHE;
@@ -112,6 +120,8 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
       note: service.note,
       authentication: service.authentication || null,
       verifiedAt: service.verifiedAt || null,
+      documentDate: service.documentDate || null,
+      retrievedAt: service.retrievedAt || null,
       termsUrl: service.termsUrl || null,
       catalogRecordId: service.catalogRecordId || null,
       machineReadableCandidate: Boolean(service.machineReadableCandidate),
@@ -133,9 +143,10 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
         ? 'Planlamasyon backend’ine açıkça yetkilendirilerek yapılandırılmış otomatik imar veri adaptörü.'
         : 'Bağlantı yapılandırılmıştır ancak otomatik veri okuma yetkisi açıkça verilmediği için yalnız kaynak kaydı olarak gösterilir.',
       termsUrl: safeHttpsUrl(connector.termsUrl),
+      authorizationReference: clean(connector.authorizationReference || connector.authorizationId, 160),
       machineReadableCandidate: connector.authorized === true && connector.automatedQueryAllowed === true,
       configured: true,
-      authorized: connector.authorized === true || connector.automatedQueryAllowed === true,
+      authorized: connector.authorized === true,
       automatedQueryAllowed: connector.automatedQueryAllowed === true
     }))
   ];
@@ -273,12 +284,12 @@ async function discoverEDevletService(location, env, fetchImpl) {
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.6.0 (https://planlamasyon.truva-ai.com)',
+        'User-Agent': 'Planlamasyon/3.7.0 (https://planlamasyon.truva-ai.com)',
         Referer: 'https://www.turkiye.gov.tr/'
       }
     }, timeoutMs, fetchImpl, clampInt(env.MUNICIPALITY_SOURCE_RETRY_COUNT, 0, 1, 1));
     if (!response.ok) throw new Error(`e-Devlet hizmet dizini ${response.status} yanıtı verdi.`);
-    const html = await response.text();
+    const html = await readResponseTextLimited(response, 1_000_000);
     const match = parseEDevletServiceHtml(html, location);
     if (!match) return null;
     return {
@@ -290,7 +301,9 @@ async function discoverEDevletService(location, env, fetchImpl) {
       provider: `${location.district} Belediyesi / e-Devlet Kapısı`,
       url: match.url,
       note: 'Resmî e-Devlet belediye hizmeti dinamik olarak bulundu. Sonuç ekranı kimlik doğrulaması isteyebilir; Planlamasyon oturum verisini okumaz.',
-      authentication: 'Hizmete göre'
+      authentication: 'Hizmete göre',
+      retrievedAt: new Date().toISOString(),
+      dataClaim: 'not-read'
     };
   } catch (error) {
     if (error?.name === 'AbortError' || /zaman aşım/i.test(error?.message || '')) throw new Error('e-Devlet belediye hizmeti araması zaman aşımına uğradı.');
@@ -332,6 +345,10 @@ function nationalCatalogActions() {
     note: record.note,
     authentication: record.authentication,
     verifiedAt: record.verifiedAt,
+    documentDate: record.documentDate || null,
+    retrievedAt: record.retrievedAt || null,
+    documentDate: record.documentDate || null,
+    retrievedAt: record.retrievedAt || null,
     catalogRecordId: record.id,
     machineReadableCandidate: Boolean(record.machineReadableCandidate)
   }));
@@ -396,12 +413,15 @@ function normalizeRegistryService(record, location, fallbackId = 'registry-servi
     note: clean(record.note, 600) || 'Planlamasyon yapılandırmasında resmî hizmet bağlantısı olarak kayıtlıdır.',
     authentication: clean(record.authentication, 120),
     verifiedAt: clean(record.verifiedAt, 40),
+    documentDate: clean(record.documentDate, 40),
+    retrievedAt: clean(record.retrievedAt, 60),
     termsUrl: safeHttpsUrl(record.termsUrl),
     machineReadableCandidate: Boolean(record.machineReadableCandidate),
     automatedQueryAllowed: record.automatedQueryAllowed === true,
     writtenPermissionRequired: record.writtenPermissionRequired === true,
     configured: record.configured === true,
-    authorized: record.authorized === true || record.automatedQueryAllowed === true
+    authorized: record.authorized === true,
+    authorizationReference: clean(record.authorizationReference || record.authorizationId, 160)
   };
 }
 
@@ -486,10 +506,14 @@ function actionToSource(action) {
     trust: action.status === 'configured' ? 'verified-connector-configured' : 'lookup-required',
     note: action.note,
     verifiedAt: action.verifiedAt || null,
+    documentDate: action.documentDate || null,
+    retrievedAt: action.retrievedAt || null,
+    freshness: describeSourceFreshness(action),
     authentication: action.authentication || null,
     termsUrl: action.termsUrl || null,
     accessMode: action.accessMode || null,
     automatedQueryAllowed: action.automatedQueryAllowed === true,
+    authorizationReference: action.authorizationReference || null,
     sourceClass: action.sourceClass || null,
     accessRequirement: action.accessRequirement || null,
     automationPolicy: action.automationPolicy || null,
@@ -579,26 +603,8 @@ function dedupeActions(actions) {
   });
 }
 
-function blockedHostname(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  if (host === '::' || host === '::1' || host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab]/.test(host)) return true;
-  if (host.startsWith('::ffff:')) return true;
-  const parts = host.split('.');
-  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
-    const [a, b] = parts.map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && [18, 19].includes(b));
-  }
-  return false;
-}
-
 function safeHttpsUrl(value) {
-  if (!value) return null;
-  try {
-    const url = new URL(String(value));
-    if (url.protocol !== 'https:' || url.username || url.password || !['', '443'].includes(url.port) || blockedHostname(url.hostname)) return null;
-    return url.toString();
-  } catch { return null; }
+  return safePublicHttpsUrl(value);
 }
 
 function accessPolicyFor(item = {}) {
@@ -621,6 +627,10 @@ function accessPolicyFor(item = {}) {
   if (mode === 'automatic-adapter' && item.authorized === true && item.automatedQueryAllowed === true) return {
     sourceClass: 'authorized-adapter', accessRequirement: 'Yapılandırılmış kurum adaptörü.',
     automationPolicy: 'authorized-automatic', dataClaim: 'eligible-after-parcel-match', userActionRequired: false
+  };
+  if (mode === 'automatic-adapter') return {
+    sourceClass: 'public-manual', accessRequirement: 'Adaptör için hem yetki hem otomatik sorgu izni açıkça tanımlanmalıdır.',
+    automationPolicy: 'manual-only', dataClaim: 'not-read', userActionRequired: true
   };
   if ((kind === 'municipality-geodata' || kind === 'national-geodata' || mode === 'read-only-result') && item.machineReadableCandidate === true) return {
     sourceClass: 'open-machine-readable', accessRequirement: 'Açık salt-okunur resmî kaynak.',
@@ -646,33 +656,17 @@ function withAccessPolicy(item = {}) {
 function connectorHostAllowed(value, rawAllowlist) {
   let url;
   try { url = new URL(String(value)); } catch { return false; }
-  const host = url.hostname.toLowerCase().replace(/\.$/, '');
-  if (host.endsWith('.gov.tr') || host.endsWith('.bel.tr') || host === 'gov.tr' || host === 'bel.tr') return true;
-  const allowed = String(rawAllowlist || '').split(/[\s,;]+/).map((item) => item.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean);
-  return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+  return isOfficialTurkishHost(url.hostname) || hostMatchesAllowlist(url.hostname, rawAllowlist);
 }
 
 async function fetchOfficialDirectory(url, options, timeoutMs, fetchImpl, retryCount = 1) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), remaining);
-    try {
-      const response = await fetchImpl(url, { ...options, signal: controller.signal });
-      if (attempt < retryCount && (response.status === 429 || response.status >= 500)) continue;
-      return response;
-    } catch (error) {
-      lastError = error;
-      if (error?.name === 'AbortError' || attempt >= retryCount) throw error;
-    } finally { clearTimeout(timer); }
-  }
-  if (lastError) throw lastError;
-  const timeoutError = new Error('Resmî kaynak zaman aşımına uğradı.');
-  timeoutError.name = 'AbortError';
-  throw timeoutError;
+  return fetchOfficialResource(url, options, {
+    timeoutMs,
+    fetchImpl,
+    retryCount,
+    maxRedirects: 2,
+    maxResponseBytes: 1_000_000
+  });
 }
 
 function arrayKeys(value) { return Array.isArray(value) ? value.map(normalize).filter(Boolean) : []; }

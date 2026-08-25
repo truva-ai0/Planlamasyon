@@ -21,7 +21,7 @@ function jsonCompletion(content, extra = {}) {
   }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-test('v3.5.0 model beyanı exact olmayan kaynağı hesaplamaya yükseltemez', async () => {
+test('v3.7.0 yetkisiz public portal Plan AI tarafından indirilmez', async () => {
   const sourceUrl = 'https://imar.example.gov.tr/acik-kaynak';
   let nvidiaCalls = 0;
   const fetchImpl = async (url) => {
@@ -50,12 +50,10 @@ test('v3.5.0 model beyanı exact olmayan kaynağı hesaplamaya yükseltemez', as
     fetchImpl
   });
 
-  assert.equal(nvidiaCalls, 1);
-  assert.equal(result.parcelMatchedEvidenceCount, 0);
-  assert.equal(result.parcelMatch, 'unverified');
+  assert.equal(nvidiaCalls, 0);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.evidenceCount, 0);
   assert.equal(result.canCalculate, false);
-  assert.equal(result.record, null);
-  assert.equal(result.fields.emsal, null);
 });
 
 test('v3.5.0 kritik değer yalnız exact parsel metnindeki alıntıyla uygulanır ve mesaj rolleri ayrıdır', async () => {

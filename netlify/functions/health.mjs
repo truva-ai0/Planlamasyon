@@ -6,6 +6,7 @@ import { runtimeEnv, runtimePlatform } from './lib/runtime-env.mjs';
 
 export async function handler(event, context = {}) {
   const env = runtimeEnv(context);
+  const platform = runtimePlatform(context);
   const automaticZoningConfigured = Boolean(
     env.PLANLAMASYON_ZONING_API_URL ||
     env.EPLAN_ADAPTER_URL ||
@@ -17,6 +18,7 @@ export async function handler(event, context = {}) {
   const environmentEnabled = String(env.ENVIRONMENT_ANALYSIS_ENABLED ?? 'true').toLowerCase() === 'true';
   const planAiEnabled = String(env.PLAN_AI_ENABLED ?? 'true').toLowerCase() === 'true';
   const planAiConfigured = Boolean(String(env.NVIDIA_API_KEY || '').trim());
+  const accountSyncEnabled = platform !== 'cloudflare-worker' && String(env.ACCOUNT_SYNC_ENABLED || '').toLowerCase() === 'true';
   const catalog = embeddedCatalogStats();
 
   return {
@@ -28,8 +30,8 @@ export async function handler(event, context = {}) {
     },
     body: JSON.stringify({
       ok: true,
-      app: 'planlamasyon-v3.6.0',
-      runtime: runtimePlatform(context),
+      app: 'planlamasyon-v3.7.0',
+      runtime: platform,
       modules: {
         tkgm: true,
         tkgmCloudflareBridge: true,
@@ -47,7 +49,7 @@ export async function handler(event, context = {}) {
         embeddedPublicPlanRecords: EMBEDDED_PUBLIC_PLAN_RECORDS.length,
         publicPlanRecordApi: '/api/plan-records',
         officialZoningDocumentReader: true,
-        officialZoningDocumentParserVersion: '3.6.0',
+        officialZoningDocumentParserVersion: '3.7.0',
         officialZoningDocumentApi: '/api/parse-zoning-document',
         officialZoningDocumentFormats: ['pdf', 'html', 'txt', 'json', 'xml', 'image-ocr'],
         parcelDocumentMatchGuard: true,
@@ -68,7 +70,9 @@ export async function handler(event, context = {}) {
         configuredMunicipalityAdapters: Boolean(env.MUNICIPALITY_CONNECTORS_JSON),
         environment: environmentEnabled,
         environmentFailover: true,
-        accounts: true,
+        accounts: accountSyncEnabled,
+        accountSyncEnabled,
+        accountStorageMode: accountSyncEnabled ? 'authenticated-server' : 'client-local-only',
         planAi: planAiEnabled,
         planAiConfigured,
         planAiVersion: PLAN_AI_VERSION,

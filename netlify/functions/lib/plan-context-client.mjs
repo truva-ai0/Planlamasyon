@@ -105,7 +105,7 @@ async function queryLayer(definition, center, timeoutMs, fetchImpl) {
       const response = await fetchImpl(url, {
         headers: {
           Accept: `${infoFormat}, application/vnd.ogc.gml;q=0.9, */*;q=0.1`,
-          'User-Agent': 'Planlamasyon/3.6.0 (+https://planlamasyon.truva-ai.com)'
+          'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)'
         },
         signal: controller.signal
       });

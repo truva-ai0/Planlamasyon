@@ -30,7 +30,7 @@ await page.waitForTimeout(500);
 await page.screenshot({ path: 'mobile-ai-v328.png', fullPage: false });
 
 const report = await page.evaluate(() => ({
-  version: document.body.innerText.includes('v3.2.8'),
+  version: document.body.innerText.includes('v3.7.0'),
   mapSize: (() => { const r = document.querySelector('#parcelMap')?.getBoundingClientRect(); return r ? { width: r.width, height: r.height } : null; })(),
   visibleTiles: [...document.querySelectorAll('#parcelMap .leaflet-tile')].filter((item) => {
     const style = getComputedStyle(item);

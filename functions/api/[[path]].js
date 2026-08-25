@@ -1,3 +1,9 @@
+const API_BODY_LIMIT_BYTES = 2_000_000;
+const ANALYSIS_REQUEST_BODY_LIMIT_BYTES = 64_000;
+const ANALYSIS_REQUEST_WINDOW_MS = 10 * 60 * 1000;
+const ANALYSIS_REQUEST_MAX_PER_WINDOW = 8;
+const analysisRequestRateStore = new Map();
+
 const CORE = {
   tkgm: () => import('../../netlify/functions/tkgm.mjs'),
   analyze: () => import('../../netlify/functions/analyze.mjs'),
@@ -12,7 +18,12 @@ const CORE = {
 export async function onRequest(context) {
   const parts = Array.isArray(context.params.path) ? context.params.path : [context.params.path].filter(Boolean);
   const route = parts.join('/');
-  if (route === 'user-data') return json(401, { ok: false, code: 'ACCOUNT_SYNC_DISABLED', message: 'Bu yayında hesap eşitleme kapalı; çalışmalar bu cihazda tutulur.' });
+  if (route === 'user-data') return json(503, {
+    ok: false,
+    code: 'ACCOUNT_SYNC_DISABLED',
+    message: 'Bu yayında hesap eşitleme kapalıdır. Çalışmalar, favoriler ve talepler yalnız bu cihazda tutulur.',
+    data: { syncEnabled: false, storage: 'client-local-only' }
+  });
   if (route === 'request-analysis') return handleAnalysisRequest(context);
   const load = CORE[route];
   if (!load) return json(404, { ok: false, code: 'API_NOT_FOUND', message: 'API yolu bulunamadı.' });
@@ -33,7 +44,7 @@ async function toNetlifyEvent(request) {
   const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
   headers['x-nf-client-connection-ip'] ||= ip;
   let body = '';
-  if (!['GET', 'HEAD'].includes(request.method)) body = await request.text();
+  if (!['GET', 'HEAD'].includes(request.method)) body = await readBoundedText(request, API_BODY_LIMIT_BYTES);
   return {
     httpMethod: request.method,
     headers,
@@ -49,28 +60,58 @@ async function toNetlifyEvent(request) {
 function fromNetlifyResult(result = {}) {
   const headers = new Headers(result.headers || {});
   if (!headers.has('Cache-Control')) headers.set('Cache-Control', 'no-store');
+  applyApiSecurityHeaders(headers);
   return new Response(result.body ?? '', { status: Number(result.statusCode) || 200, headers });
 }
 
-async function handleAnalysisRequest(context) {
+export async function handleAnalysisRequest(context, fetchImpl = fetch) {
   if (context.request.method !== 'POST') return json(405, { ok: false, code: 'METHOD_NOT_ALLOWED', message: 'Yalnızca POST destekleniyor.' }, { Allow: 'POST' });
+  const contentType = String(context.request.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) return json(415, { ok: false, code: 'UNSUPPORTED_MEDIA_TYPE', message: 'İstek JSON biçiminde gönderilmelidir.' });
+  if (!isAllowedOrigin(context.request, context.env)) return json(403, { ok: false, code: 'ORIGIN_NOT_ALLOWED', message: 'Bu kaynaktan analiz talebi gönderilemez.' });
+  const clientKey = context.request.headers.get('cf-connecting-ip') || context.request.headers.get('x-forwarded-for') || 'unknown';
+  if (!consumeRateLimit(analysisRequestRateStore, clientKey, ANALYSIS_REQUEST_MAX_PER_WINDOW, ANALYSIS_REQUEST_WINDOW_MS)) {
+    return json(429, { ok: false, code: 'RATE_LIMITED', message: 'Çok fazla talep gönderildi. Lütfen kısa süre sonra yeniden deneyin.' }, { 'Retry-After': '600' });
+  }
   let body;
-  try { body = await context.request.json(); } catch { return json(400, { ok: false, code: 'INVALID_JSON', message: 'İstek okunamadı.' }); }
+  try {
+    const raw = await readBoundedText(context.request, ANALYSIS_REQUEST_BODY_LIMIT_BYTES);
+    body = raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    if (error?.code === 'PAYLOAD_TOO_LARGE') return json(413, { ok: false, code: error.code, message: error.message });
+    return json(400, { ok: false, code: 'INVALID_JSON', message: 'İstek okunamadı.' });
+  }
+  if (clean(body?.website, 200)) return json(202, { ok: true, data: { accepted: false, emailSent: false, serverStored: false, storage: 'discarded' } });
   const parcel = body?.parcel || {};
   const email = clean(body?.email, 240);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(400, { ok: false, code: 'EMAIL_REQUIRED', message: 'Geçerli e-posta gerekli.' });
   if (!clean(parcel.block, 40) || !clean(parcel.parcel, 40)) return json(400, { ok: false, code: 'PARCEL_REQUIRED', message: 'Ada ve parsel bilgisi gerekli.' });
   const id = `req_${Date.now()}_${crypto.randomUUID().slice(0, 12)}`;
   const createdAt = new Date().toISOString();
-  const emailSent = await sendNotification(context.env, { id, createdAt, email, body, parcel }).catch(() => false);
-  return json(201, { ok: true, data: { id, status: 'Gönderildi', emailSent, createdAt, storage: 'cloudflare-stateless' } });
+  const delivery = await sendNotification(context.env, { id, createdAt, email, body, parcel }, fetchImpl).catch(() => ({ configured: true, sent: false }));
+  return json(delivery.sent ? 201 : 202, {
+    ok: true,
+    data: {
+      id,
+      status: delivery.sent ? 'Ekibe iletildi' : 'Yalnız bu cihazda saklanabilir',
+      accepted: delivery.sent,
+      emailSent: delivery.sent,
+      notificationConfigured: delivery.configured,
+      serverStored: false,
+      createdAt,
+      storage: delivery.sent ? 'email-notification-only' : 'client-local-only',
+      notice: delivery.sent
+        ? 'Talep ekibe e-posta ile iletildi; sunucuda hesap kaydı oluşturulmadı.'
+        : 'Sunucu bildirimi yapılandırılmadığı veya iletilemediği için talep ekibe gönderilmedi. Kayıt yalnız bu cihazda saklanır.'
+    }
+  });
 }
 
-async function sendNotification(env, record) {
-  if (!env.RESEND_API_KEY || !env.ANALYSIS_TEAM_EMAIL || !env.FROM_EMAIL) return false;
+async function sendNotification(env, record, fetchImpl = fetch) {
+  if (!env.RESEND_API_KEY || !env.ANALYSIS_TEAM_EMAIL || !env.FROM_EMAIL) return { configured: false, sent: false };
   const p = record.parcel;
   const location = [p.province, p.district, p.neighbourhood].map(v => clean(v, 160)).filter(Boolean).join(' / ');
-  const response = await fetch('https://api.resend.com/emails', {
+  const response = await fetchImpl('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -81,7 +122,57 @@ async function sendNotification(env, record) {
       text: `Talep: ${record.id}\nKonum: ${location}\nAda/Parsel: ${clean(p.block,40)}/${clean(p.parcel,40)}\nE-posta: ${record.email}\nTarih: ${record.createdAt}`
     })
   });
-  return response.ok;
+  return { configured: true, sent: response.ok };
+}
+
+async function readBoundedText(request, maxBytes) {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw requestError('İstek gövdesi çok büyük.', 'PAYLOAD_TOO_LARGE');
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) throw requestError('İstek gövdesi çok büyük.', 'PAYLOAD_TOO_LARGE');
+  return text;
+}
+
+function isAllowedOrigin(request, env = {}) {
+  const origin = request.headers.get('origin');
+  if (!origin) return true;
+  let expected;
+  try { expected = new URL(request.url).origin; } catch { return false; }
+  if (origin === expected) return true;
+  const allowed = String(env.PUBLIC_APP_ORIGINS || '').split(',').map((item) => item.trim()).filter(Boolean);
+  return allowed.includes(origin);
+}
+
+function consumeRateLimit(store, rawKey, max, windowMs) {
+  const now = Date.now();
+  const key = String(rawKey || 'unknown').split(',')[0].trim().slice(0, 180) || 'unknown';
+  const current = store.get(key);
+  if (!current || current.resetAt <= now) {
+    store.set(key, { count: 1, resetAt: now + windowMs });
+    cleanupRateStore(store, now);
+    return true;
+  }
+  current.count += 1;
+  return current.count <= max;
+}
+
+function cleanupRateStore(store, now) {
+  if (store.size < 1500) return;
+  for (const [key, value] of store) if (value.resetAt <= now) store.delete(key);
+  while (store.size > 1000) store.delete(store.keys().next().value);
+}
+
+function requestError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function applyApiSecurityHeaders(headers) {
+  if (!headers.has('X-Content-Type-Options')) headers.set('X-Content-Type-Options', 'nosniff');
+  if (!headers.has('Referrer-Policy')) headers.set('Referrer-Policy', 'no-referrer');
+  if (!headers.has('Content-Security-Policy')) headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  if (!headers.has('Permissions-Policy')) headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 }
 
 function clean(value, max = 500) {
@@ -91,5 +182,7 @@ function clean(value, max = 500) {
 }
 
 function json(status, body, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders } });
+  const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extraHeaders });
+  applyApiSecurityHeaders(headers);
+  return new Response(JSON.stringify(body), { status, headers });
 }

@@ -153,7 +153,7 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   configuration.planAiEvidenceCount = Number(planAi?.evidenceCount || 0);
   configuration.planAiEvidenceBackedFieldCount = Number(planAi?.evidenceBackedFields?.length || 0);
   configuration.boundedAnalysis = true;
-  configuration.boundedAnalysisVersion = '3.6.0';
+  configuration.boundedAnalysisVersion = '3.7.0';
 
   const publicPlanRecord = buildPublicPlanMetadataRecord(planContext);
   if (publicPlanRecord) records.push(publicPlanRecord);
@@ -390,7 +390,7 @@ async function fetchConnector(connector, payload, fetchImpl, env) {
       body: method === 'POST' ? JSON.stringify({
         parcel: sanitizeParcelPayload(payload.parcel),
         query: sanitizeQuery(payload.query),
-        requestedFields: ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'setbacks', 'setbackConditions', 'planNotes', 'allowances', 'constraints']
+        requestedFields: ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'setbacks', 'setbackConditions', 'conditionalFields', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea', 'planNotes', 'allowances', 'constraints']
       }) : undefined
     }, timeoutMs, fetchImpl);
     if (response.status === 404 || response.status === 204) return null;
@@ -566,7 +566,7 @@ function matchesLocation(connector, parcel, query) {
 function selectBestRecord(records) {
   const score = (record) => {
     let value = record.source.trust === 'verified' ? 100 : record.source.trust === 'user-evidence' ? 95 : record.source.trust === 'ai-assisted-official' ? 92 : 30;
-    for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback']) if (record.fields[field] != null) value += 2;
+    for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea']) if (record.fields[field] != null) value += 2;
     if (Array.isArray(record.fields.setbackConditions) && record.fields.setbackConditions.length) value += 2;
     if (record.source.url) value += 5;
     if (record.fields.planName) value += 3;
@@ -577,13 +577,13 @@ function selectBestRecord(records) {
 
 const MERGE_SCALAR_FIELDS = [
   'landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder',
-  'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'planName', 'planNumber',
+  'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea', 'planName', 'planNumber',
   'planScale', 'planDate', 'authority', 'planNotes', 'parkingRequired',
   'roadDedicationPossible', 'floodDataStatus'
 ];
 const MERGE_CONFLICT_SENSITIVE_FIELDS = new Set([
   'landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder',
-  'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'parkingRequired',
+  'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea', 'parkingRequired',
   'roadDedicationPossible', 'floodDataStatus'
 ]);
 const MERGE_PLAN_IDENTITY_FIELDS = ['planName', 'planNumber', 'planScale', 'planDate'];
@@ -629,6 +629,13 @@ export function mergeComplementaryZoningRecords(records = [], preferredRecord = 
     fieldSources.setbackConditions = publicFieldSource(chosen.source, 'setbackConditions');
   }
 
+  const conditionalCandidates = ordered.filter((record) => record.fields?.conditionalFields && Object.values(record.fields.conditionalFields).some((items) => Array.isArray(items) && items.length));
+  if (conditionalCandidates.length) {
+    const chosen = preferred.fields?.conditionalFields && Object.values(preferred.fields.conditionalFields).some((items) => Array.isArray(items) && items.length) ? preferred : conditionalCandidates[0];
+    input.conditionalFields = chosen.fields.conditionalFields;
+    fieldSources.conditionalFields = publicFieldSource(chosen.source, 'conditionalFields');
+  }
+
   const allowanceKeys = Object.keys(normalizeZoningFields({}).allowances || {});
   input.allowances = {};
   for (const key of allowanceKeys) {
@@ -671,7 +678,7 @@ export function shouldUseManualOnlyStatus(providerDiscovery = {}) {
 
 function recordScore(record) {
   let value = record?.source?.trust === 'verified' ? 100 : record?.source?.trust === 'user-evidence' ? 95 : record?.source?.trust === 'ai-assisted-official' ? 92 : 30;
-  for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback']) if (hasValue(record?.fields?.[field])) value += 2;
+  for (const field of ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea']) if (hasValue(record?.fields?.[field])) value += 2;
   if (Array.isArray(record?.fields?.setbackConditions) && record.fields.setbackConditions.length) value += 2;
   if (record?.source?.url) value += 5;
   if (record?.fields?.planName) value += 3;
@@ -752,13 +759,15 @@ function dedupeSources(sources) {
 }
 
 function hasActionableFields(fields) {
-  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback'].some((key) => fields?.[key] != null && fields[key] !== '')
-    || Boolean(fields?.setbackConditions?.length);
+  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'].some((key) => fields?.[key] != null && fields[key] !== '')
+    || Boolean(fields?.setbackConditions?.length)
+    || Boolean(fields?.conditionalFields && Object.values(fields.conditionalFields).some((items) => Array.isArray(items) && items.length));
 }
 
 function hasAnyZoningField(fields) {
-  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'planName', 'planNotes'].some((key) => fields?.[key] != null && fields[key] !== '')
-    || Boolean(fields?.setbackConditions?.length);
+  return ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'netParcelArea', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea', 'planName', 'planNotes'].some((key) => fields?.[key] != null && fields[key] !== '')
+    || Boolean(fields?.setbackConditions?.length)
+    || Boolean(fields?.conditionalFields && Object.values(fields.conditionalFields).some((items) => Array.isArray(items) && items.length));
 }
 
 function parcelKey(parcel, query) {

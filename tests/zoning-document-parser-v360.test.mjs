@@ -35,7 +35,7 @@ test('v3.6 birleşik oran, Z+kat, kompakt nizam ve net alan etiketlerini kayıps
     'Arka bahçe mesafesi: 4 m'
   ]);
 
-  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.6.0');
+  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.7.0');
   assert.equal(parsed.fields.netParcelArea, 875.5);
   assert.equal(parsed.fields.taks, 0.25);
   assert.equal(parsed.fields.emsal, 1.5);
@@ -98,7 +98,7 @@ test('v3.6 her belge alanında kaynak, belge tarihi, alınma tarihi, güven ve a
     assert.equal(evidence.sourceUrl, metadata.sourceUrl);
     assert.equal(evidence.documentDate, '2026-08-25');
     assert.equal(evidence.retrievedAt, metadata.retrievedAt);
-    assert.equal(evidence.parserVersion, '3.6.0');
+    assert.equal(evidence.parserVersion, '3.7.0');
     assert.equal(evidence.parcelMatchStatus, 'exact');
     assert.ok(evidence.excerpt);
     assert.ok(['high', 'medium'].includes(evidence.confidence));
@@ -113,7 +113,7 @@ test('v3.6 doğrulanmış net alanla hesaplar; net alan yoksa kadastro fallbacki
     zoning: { status: 'user-evidence', conflict: false, fields: { netParcelArea: 800, taks: 0.25, emsal: 1.5 } },
     environment: { status: 'available', items: [], categories: [] }
   });
-  assert.equal(netAnalysis.version, '3.6.0');
+  assert.equal(netAnalysis.version, '3.7.0');
   assert.equal(netAnalysis.calculationBasis.kind, 'net-imar-parseli-alani');
   assert.equal(netAnalysis.metrics.footprint.value, 200);
   assert.equal(netAnalysis.metrics.construction.value, 1200);

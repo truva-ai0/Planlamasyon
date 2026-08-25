@@ -101,7 +101,9 @@ test('Plan AI endpointi NVIDIA 401 hatasında sınırlı güvenli cevap döndür
     assert.equal(result.statusCode,200);
     assert.equal(body.ok,true);
     assert.equal(body.data.degraded,true);
-    assert.equal(body.data.errorCode,'PLAN_AI_UNAUTHORIZED');
+    assert.equal(body.data.errorCode,undefined);
+    assert.match(body.data.notice,/mevcut doğrulanmış analiz özetlendi/i);
+    assert.doesNotMatch(result.body,/PLAN_AI_UNAUTHORIZED|bad key/i);
     assert.match(body.data.answer,/doğrulanmış|doğrulanamadı/i);
   } finally { globalThis.fetch=priorFetch; }
 });

@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 
-export const ZONING_DOCUMENT_PARSER_VERSION = '3.4.0';
+export const ZONING_DOCUMENT_PARSER_VERSION = '3.5.0';
 
 const FIELD_LABELS = {
   planName: 'Plan adı', planNumber: 'Plan işlem / karar no', planScale: 'Plan ölçeği', planDate: 'Plan / belge tarihi',
   authority: 'Yetkili idare', landUse: 'Plan fonksiyonu', taks: 'TAKS', emsal: 'Emsal / KAKS', floors: 'Kat adedi / Yençok (kat)',
-  hmax: 'Yençok / Hmax (metre)', buildingOrder: 'Yapı nizamı', frontSetback: 'Ön bahçe', sideSetback: 'Yan bahçe', rearSetback: 'Arka bahçe'
+  hmax: 'Yençok / Hmax (metre)', buildingOrder: 'Yapı nizamı', frontSetback: 'Ön bahçe', sideSetback: 'Yan bahçe', rearSetback: 'Arka bahçe',
+  netParcelArea: 'Net imar parseli alanı', setbackConditions: 'Cepheye göre çekme mesafeleri'
 };
 
 const LAND_USE_PATTERNS = [
@@ -77,14 +78,25 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
   setField('planScale', detectPlanScale(lines));
   setField('planDate', detectPlanDate(lines));
   setField('landUse', detectLandUse(lines, normalizedText));
-  setField('taks', detectRatioField(lines, ['TAKS', 'TABAN ALANI KATSAYISI'], 1));
-  setField('emsal', detectRatioField(lines, ['KAKS', 'EMSAL', 'E'], 15));
+  setField('netParcelArea', detectNetParcelArea(lines));
+  setField('taks', detectRatioField(lines, 'taks', 1));
+  setField('emsal', detectRatioField(lines, 'emsal', 15));
   setField('floors', detectFloors(lines));
   setField('hmax', detectHmax(lines));
   setField('buildingOrder', detectBuildingOrder(lines, normalizedText));
-  setField('frontSetback', detectSetback(lines, 'front'));
-  setField('sideSetback', detectSetback(lines, 'side'));
-  setField('rearSetback', detectSetback(lines, 'rear'));
+  const setbacks = detectSetbacks(lines);
+  setField('frontSetback', setbacks.scalars.front);
+  setField('sideSetback', setbacks.scalars.side);
+  setField('rearSetback', setbacks.scalars.rear);
+  if (setbacks.conditions.length) {
+    fields.setbackConditions = setbacks.conditions;
+    fieldEvidence.setbackConditions = {
+      label: FIELD_LABELS.setbackConditions,
+      confidence: setbacks.ambiguousTypes.length ? 'medium' : 'high',
+      excerpt: trim(setbacks.conditions.map((item) => item.excerpt).filter(Boolean).join(' | '), 520),
+      method: 'setback-condition-list'
+    };
+  }
 
   const allowances = detectAllowances(lines, normalizedText);
   const constraints = detectConstraints(lines);
@@ -108,6 +120,7 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
   if (parcelMatch.status === 'unverified') warnings.push('Belge metninde ada/parsel eşleşmesi otomatik doğrulanamadı; kullanıcı belge-parsel ilişkisini elle onaylamalıdır.');
   if (historicalOnly) warnings.push('Bu metin tarihsel plan/askı kaydı niteliğinde görünüyor; güncel yapılaşma hakkı olarak uygulanamaz.');
   if (!hasCalculationValues) warnings.push('Belgede TAKS, emsal, kat, Yençok veya çekme mesafesi gibi hesaplanabilir yapılaşma değeri bulunamadı.');
+  if (setbacks.ambiguousTypes.length) warnings.push(`Belgede ${setbacks.ambiguousTypes.map(setbackTypeLabel).join(' ve ')} için birden fazla koşullu değer bulundu; tek bir çekme mesafesi seçilmedi. Cephe koşulları ayrı ayrı korunmuştur.`);
   if (requiredMissing.length) warnings.push(`Tam sonuç için eksik alanlar: ${requiredMissing.map((key) => FIELD_LABELS[key]).join(', ')}.`);
   if (overallConfidence === 'low') warnings.push('Otomatik okuma güveni düşük; alanları resmî belgeyle tek tek karşılaştırın.');
 
@@ -122,6 +135,7 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
     planScale: fields.planScale || null,
     planDate: fields.planDate || null,
     landUse: fields.landUse || null,
+    netParcelArea: numberOrNull(fields.netParcelArea),
     taks: numberOrNull(fields.taks),
     emsal: numberOrNull(fields.emsal),
     floors: integerOrNull(fields.floors),
@@ -130,6 +144,7 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
     frontSetback: numberOrNull(fields.frontSetback),
     sideSetback: numberOrNull(fields.sideSetback),
     rearSetback: numberOrNull(fields.rearSetback),
+    setbackConditions: fields.setbackConditions || [],
     allowances,
     parkingRequired,
     roadDedicationPossible,
@@ -290,31 +305,68 @@ function detectLandUse(lines, normalizedText) {
   return null;
 }
 
-function detectRatioField(lines, labels, max) {
-  const escaped = labels.map((item) => item === 'E' ? '(?:E(?:MSAL)?)' : escapeRegex(item)).join('|');
-  const pattern = new RegExp(`(?:${escaped})\\s*(?:\\([^)]{0,20}\\))?\\s*[:=xX-]?\\s*(0?[,.]\\d{1,3}|[1-9]\\d?(?:[,.]\\d{1,3})?)`, 'iu');
+function detectNetParcelArea(lines) {
+  const label = /net\s+imar\s+parsel(?:i)?\s+(?:alani|yuz\s*olcumu|yuzolcumu)/i;
+  const valuePattern = /([0-9]{1,3}(?:[.\s][0-9]{3})*(?:,[0-9]{1,3})?|[0-9]+(?:[,.][0-9]{1,3})?)\s*(?:m\s*[²2]|metrekare)(?![\p{L}\p{N}])/iu;
   for (const line of lines) {
-    if (!labels.some((label) => label === 'E' ? /\bE\s*[:=]/iu.test(line) : new RegExp(escapeRegex(label), 'iu').test(line))) continue;
-    const match = line.match(pattern);
+    const labelMatch = normalizeForSearch(line).match(label);
+    if (!labelMatch) continue;
+    const match = line.slice((labelMatch.index || 0) + labelMatch[0].length).match(new RegExp(`^\\s*[:=.-]?\\s*${valuePattern.source}`, 'iu'));
     if (!match) continue;
-    const value = parseLocaleNumber(match[1]);
-    if (value != null && value >= 0 && value <= max) return result(value, 'high', line, `${labels[0].toLowerCase()}-label`);
+    const value = parseLocaleNumber(match[1], true);
+    if (value != null && value > 0 && value <= 100_000_000) return result(value, 'high', line, 'net-parcel-area-label');
+  }
+  return null;
+}
+
+function detectRatioField(lines, type, max) {
+  const taksLabel = '(?:T\\s*\\.?\\s*A\\s*\\.?\\s*K\\s*\\.?\\s*S\\s*\\.?|TABAN\\s+ALANI\\s+KAT(?:SAYISI|SAYI(?:SI)?))';
+  const emsalLabel = '(?:EMSAL(?:\\s*\\(\\s*K\\s*\\.?\\s*A\\s*\\.?\\s*K\\s*\\.?\\s*S\\s*\\.?\\s*\\))?|K\\s*\\.?\\s*A\\s*\\.?\\s*K\\s*\\.?\\s*S\\s*\\.?(?:\\s*\\(\\s*EMSAL\\s*\\))?|KATLAR\\s+ALANI\\s+KAT(?:SAYISI|SAYI(?:SI)?))';
+  const label = type === 'taks' ? taksLabel : emsalLabel;
+  const number = '(?:[0-9]+(?:[,.][0-9]+)?|[,.][0-9]+)';
+  const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])(%)?\\s*${label}\\s*[:=xX-]?\\s*(%)?\\s*(${number})\\s*(%)?`, 'iu');
+  const shortEPattern = type === 'emsal' ? new RegExp(`(?:^|[^\\p{L}\\p{N}])E\\s*\\.?\\s*[:=]\\s*(%)?\\s*(${number})\\s*(%)?`, 'iu') : null;
+  const reversePercentPattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])%\\s*(${number})\\s*${label}(?:[^\\p{L}\\p{N}]|$)`, 'iu');
+  for (const line of lines) {
+    const standardMatch = line.match(pattern);
+    if (standardMatch) {
+      let value = parseLocaleNumber(standardMatch[3]);
+      if (value == null) continue;
+      if (standardMatch[1] || standardMatch[2] || standardMatch[4]) value /= 100;
+      if (value >= 0 && value <= max) return result(value, 'high', line, `${type}-label`);
+      continue;
+    }
+    const shortEMatch = shortEPattern ? line.match(shortEPattern) : null;
+    if (shortEMatch) {
+      let value = parseLocaleNumber(shortEMatch[2]);
+      if (value == null) continue;
+      if (shortEMatch[1] || shortEMatch[3]) value /= 100;
+      if (value >= 0 && value <= max) return result(value, 'high', line, `${type}-label`);
+      continue;
+    }
+    const reverseMatch = line.match(reversePercentPattern);
+    if (reverseMatch) {
+      const value = parseLocaleNumber(reverseMatch[1]);
+      if (value != null && value / 100 >= 0 && value / 100 <= max) return result(value / 100, 'high', line, `${type}-percent-prefix`);
+    }
   }
   return null;
 }
 
 function detectFloors(lines) {
   const patterns = [
-    /(?:kat\s+adedi|kat\s+sayısı|azami\s+kat)\s*[:=-]?\s*(\d{1,3})\b/iu,
-    /\b(\d{1,3})\s*kat(?:lı|tır|dır)?\b/iu,
-    /\b(?:zemin\s*\+\s*)?(\d{1,2})\s*kat\b/iu
+    /(?:kat\s+adedi|kat\s+sayisi|azami\s+kat)\s*[:=-]?\s*(\d{1,3})\b/i,
+    /(?:yen\s*cok|maksimum\s+kat)(?:\s*\(\s*kat\s*\))?\s*[:=.-]?\s*(\d{1,3})\s*kat\b/i,
+    /\b(\d{1,3})\s*kat(?:li|tir|dir)?\b/i,
+    /\b(?:zemin\s*\+\s*)?(\d{1,2})\s*kat\b/i
   ];
   for (const line of lines) {
+    const normalizedLine = normalizeForSearch(line);
     for (const pattern of patterns) {
-      const match = line.match(pattern);
+      const match = normalizedLine.match(pattern);
       if (!match) continue;
       const value = Number(match[1]);
-      if (Number.isInteger(value) && value >= 1 && value <= 150) return result(value, /kat\s+(?:adedi|sayısı)/iu.test(line) ? 'high' : 'medium', line, 'floor-pattern');
+      if (Number.isInteger(value) && value >= 1 && value <= 150) return result(value, /kat\s+(?:adedi|sayisi)/i.test(normalizedLine) ? 'high' : 'medium', line, 'floor-pattern');
     }
   }
   return null;
@@ -322,7 +374,10 @@ function detectFloors(lines) {
 
 function detectHmax(lines) {
   for (const line of lines) {
-    const match = line.match(/(?:YENÇOK|YENCOK|H\s*MAX|HMAX|MAKSİMUM\s+YÜKSEKLİK|MAKSIMUM\s+YUKSEKLIK)\s*[:=.-]?\s*(\d{1,3}(?:[,.]\d{1,2})?)\s*(?:m|metre)\b/iu);
+    const normalizedLine = normalizeForSearch(line);
+    const explicitHeight = normalizedLine.match(/(?:h\s*\.?\s*(?:max|maks)|hmax|hmaks|maksimum\s+(?:yapi\s+|bina\s+)?yuksekligi|(?:yapi|bina)\s+yuksekligi)\s*[:=.-]?\s*(\d{1,3}(?:[,.]\d{1,3})?)\s*(?:m|metre)?\b/i);
+    const yencokHeight = normalizedLine.match(/(?:yen\s*cok)(?:\s*\(\s*(?:m|metre)\s*\))?\s*[:=.-]?\s*(\d{1,3}(?:[,.]\d{1,3})?)\s*(?:m|metre)\b/i);
+    const match = explicitHeight || yencokHeight;
     if (match) {
       const value = parseLocaleNumber(match[1]);
       if (value != null && value > 0 && value <= 1000) return result(value, 'high', line, 'hmax-label');
@@ -341,17 +396,87 @@ function detectBuildingOrder(lines, normalizedText) {
   return match ? result(normalizeBuildingOrderValue(match[1]), 'medium', context(normalizedText, match.index, match[0].length), 'order-pattern') : null;
 }
 
-function detectSetback(lines, side) {
-  const labels = side === 'front' ? ['ön bahçe', 'ön çekme', 'yol cephesi çekme'] : side === 'side' ? ['yan bahçe', 'yan çekme'] : ['arka bahçe', 'arka çekme'];
-  const pattern = new RegExp(`(?:${labels.map(escapeRegex).join('|')})(?:\\s+mesafesi)?\\s*[:=.-]?\\s*(\\d{1,3}(?:[,.]\\d{1,2})?)\\s*(?:m|metre)?`, 'iu');
-  for (const line of lines) {
-    const match = line.match(pattern);
-    if (match) {
-      const value = parseLocaleNumber(match[1]);
-      if (value != null && value >= 0 && value <= 500) return result(value, 'high', line, `${side}-setback-label`);
+function detectSetbacks(lines) {
+  const definitions = {
+    front: /(?:on\s+bahce(?:\s+cekme)?(?:\s+mesafesi)?|on\s+(?:yapi\s+)?(?:cekme|yaklasma)(?:\s+mesafesi)?|yol\s+cephesi\s+(?:yapi\s+)?(?:cekme|yaklasma)(?:\s+mesafesi)?|yoldan\s+(?:yapi\s+)?(?:cekme|yaklasma)(?:\s+mesafesi)?)/i,
+    side: /(?:yan\s+bahce(?:\s+cekme)?(?:\s+mesafesi)?|yan\s+(?:yapi\s+)?(?:cekme|yaklasma)(?:\s+mesafesi)?)/i,
+    rear: /(?:arka\s+bahce(?:\s+cekme)?(?:\s+mesafesi)?|arka\s+(?:yapi\s+)?(?:cekme|yaklasma)(?:\s+mesafesi)?)/i
+  };
+  const output = { conditions: [], scalars: {}, ambiguousTypes: [] };
+  for (const [type, labelPattern] of Object.entries(definitions)) {
+    for (const line of lines) {
+      const normalizedLine = normalizeForSearch(line);
+      const labelMatch = normalizedLine.match(labelPattern);
+      if (!labelMatch) continue;
+      const start = (labelMatch.index || 0) + labelMatch[0].length;
+      const otherLabelOffsets = Object.entries(definitions)
+        .filter(([otherType]) => otherType !== type)
+        .map(([, pattern]) => normalizedLine.slice(start).search(pattern))
+        .filter((index) => index >= 0);
+      const end = otherLabelOffsets.length ? start + Math.min(...otherLabelOffsets) : normalizedLine.length;
+      const segment = normalizedLine.slice(start, end).replace(/\([^)]*\byol\b[^)]*\)/gi, ' ');
+      const measurements = extractSetbackMeasurements(segment, type);
+      for (const measurement of measurements) {
+        output.conditions.push({
+          type,
+          qualifier: measurement.qualifier,
+          value: measurement.value,
+          unit: 'm',
+          excerpt: trim(line, 520)
+        });
+      }
+    }
+    const conditions = dedupeSetbackConditions(output.conditions.filter((item) => item.type === type));
+    output.conditions = [...output.conditions.filter((item) => item.type !== type), ...conditions];
+    const uniqueValues = [...new Set(conditions.map((item) => item.value))];
+    if (uniqueValues.length === 1) {
+      output.scalars[type] = result(uniqueValues[0], 'high', conditions.map((item) => item.excerpt).join(' | '), `${type}-setback-label`);
+    } else if (uniqueValues.length > 1) {
+      output.ambiguousTypes.push(type);
     }
   }
-  return null;
+  return output;
+}
+
+function extractSetbackMeasurements(segment, type) {
+  const qualifierPattern = type === 'front'
+    ? '(?:kuzey|guney|dogu|bati|[1-9]\\d*\\.?\\s*(?:nolu|numarali)?\\s*(?:yol|cephe)|yol\\s*\\d+|\\d+(?:[,.]\\d+)?\\s*m(?:etre)?lik\\s*yol)'
+    : type === 'side' ? '(?:sag|sol|kuzey|guney|dogu|bati)' : '(?:kuzey|guney|dogu|bati)';
+  const qualified = new RegExp(`(${qualifierPattern})(?:\\s+(?:yolundan|yola\\s+bakan|cephesi|cephe|tarafi|tarafta))?\\s*[:=.-]?\\s*(\\d{1,3}(?:[,.]\\d{1,3})?)\\s*(?:m|metre)\\b`, 'gi');
+  const output = [];
+  let match;
+  while ((match = qualified.exec(segment))) {
+    const value = parseLocaleNumber(match[2]);
+    if (value != null && value >= 0 && value <= 500) output.push({ qualifier: cleanSetbackQualifier(match[1]), value });
+  }
+  if (output.length) return output;
+  const unqualified = /(?:^|[,:;=/\-]\s*)(\d{1,3}(?:[,.]\d{1,3})?)\s*(?:m|metre)?\b/gi;
+  while ((match = unqualified.exec(segment))) {
+    const value = parseLocaleNumber(match[1]);
+    if (value != null && value >= 0 && value <= 500) output.push({ qualifier: null, value });
+  }
+  return output;
+}
+
+function dedupeSetbackConditions(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${item.type}|${normalizeForSearch(item.qualifier || '')}|${item.value}|${item.excerpt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function cleanSetbackQualifier(value) {
+  const cleaned = cleanValue(value, 120);
+  if (!cleaned) return null;
+  const canonical = { kuzey: 'Kuzey', guney: 'Güney', dogu: 'Doğu', bati: 'Batı', sag: 'Sağ', sol: 'Sol' }[normalizeForSearch(cleaned)];
+  return canonical || titleCaseTurkish(cleaned);
+}
+
+function setbackTypeLabel(type) {
+  return ({ front: 'ön bahçe', side: 'yan bahçe', rear: 'arka bahçe' })[type] || type;
 }
 
 function detectAllowances(lines, text) {
@@ -411,7 +536,19 @@ function result(value, confidence, excerpt, method) { return { value, confidence
 function normalizeLandUseValue(value) { const text = cleanValue(value, 180); if (!text) return null; for (const [label, pattern] of LAND_USE_PATTERNS) if (pattern.test(text)) return label; return titleCaseTurkish(text.replace(/[;,.].*$/, '')); }
 function normalizeBuildingOrderValue(value) { const normalized = normalizeForSearch(value); if (/ayrik/.test(normalized)) return 'Ayrık'; if (/bitisik/.test(normalized)) return 'Bitişik'; if (/blok/.test(normalized)) return 'Blok'; if (/serbest/.test(normalized)) return 'Serbest'; return cleanValue(value, 120); }
 function normalizeScale(value) { return String(value).replace(/\s+/g, '').replace(':', '/'); }
-function parseLocaleNumber(value) { const text = String(value ?? '').trim().replace(/\s/g, '').replace(',', '.'); const number = Number(text); return Number.isFinite(number) ? number : null; }
+function parseLocaleNumber(value, preferThousands = false) {
+  let text = String(value ?? '').trim().replace(/\s/g, '');
+  if (!text) return null;
+  if (text.includes(',') && text.includes('.')) {
+    text = text.lastIndexOf(',') > text.lastIndexOf('.') ? text.replace(/\./g, '').replace(',', '.') : text.replace(/,/g, '');
+  } else if (text.includes(',')) {
+    text = text.replace(',', '.');
+  } else if (preferThousands && /^\d{1,3}(?:\.\d{3})+$/.test(text)) {
+    text = text.replace(/\./g, '');
+  }
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
 function numericText(value) { const text = String(value ?? '').replace(/[^0-9]/g, '').replace(/^0+/, ''); return text || null; }
 function numberOrNull(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
 function integerOrNull(value) { const number = Number(value); return Number.isInteger(number) ? number : null; }

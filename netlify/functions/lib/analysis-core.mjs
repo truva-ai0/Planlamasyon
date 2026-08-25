@@ -23,35 +23,47 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
   const properties = parcel?.properties || {};
   const parcelArea = finitePositive(properties.area) ?? parseArea(properties.areaText);
   const zoningStatus = zoning?.status || 'unavailable';
-  const fields = zoning?.fields || {};
   const calculationsAllowed = ['verified', 'user-evidence', 'ai-assisted-official'].includes(zoningStatus) && zoning?.conflict !== true;
+  const fields = normalizeZoningFields(zoning?.fields || {});
+  const verifiedNetParcelArea = calculationsAllowed ? finitePositive(fields.netParcelArea) : null;
+  const calculationArea = verifiedNetParcelArea ?? parcelArea;
+  const calculationAreaKind = verifiedNetParcelArea != null ? 'net-imar-parseli-alani' : 'kadastro-parsel-alani';
+  const calculationAreaLabel = verifiedNetParcelArea != null ? 'Doğrulanmış net imar parseli alanı' : 'Kadastro parsel alanı';
 
   const taks = calculationsAllowed ? ratio(fields.taks, 1) : null;
   const emsal = calculationsAllowed ? ratio(fields.emsal, 15) : null;
   const floors = calculationsAllowed ? integer(fields.floors, 1, 150) : null;
   const hmax = calculationsAllowed ? finitePositive(fields.hmax) : null;
-  const footprint = parcelArea != null && taks != null ? round2(parcelArea * taks) : null;
-  const construction = parcelArea != null && emsal != null ? round2(parcelArea * emsal) : null;
-  const outside = parcelArea != null && footprint != null ? round2(Math.max(0, parcelArea - footprint)) : null;
+  const footprint = calculationArea != null && taks != null ? round2(calculationArea * taks) : null;
+  const construction = calculationArea != null && emsal != null ? round2(calculationArea * emsal) : null;
+  const outside = calculationArea != null && footprint != null ? round2(Math.max(0, calculationArea - footprint)) : null;
+  const calculationBasis = {
+    area: calculationArea ?? null,
+    kind: calculationArea != null ? calculationAreaKind : 'unavailable',
+    label: calculationArea != null ? calculationAreaLabel : 'Hesap alanı doğrulanamadı',
+    cadastralParcelArea: parcelArea ?? null,
+    netParcelArea: verifiedNetParcelArea,
+    sourceField: verifiedNetParcelArea != null ? 'netParcelArea' : 'parcel.area'
+  };
 
   const metrics = {
     floors: metric(floors, floors != null ? `${floors} Kat` : null, 'En fazla', 'floors'),
-    footprint: metric(footprint, formatArea(footprint), 'Binanın oturabileceği yaklaşık alan', 'taks'),
-    construction: metric(construction, formatArea(construction), 'Yaklaşık toplam emsale esas alan', 'emsal'),
-    outside: metric(outside, formatArea(outside), 'Bina dışında kalan yaklaşık alan', 'taks')
+    footprint: metric(footprint, formatArea(footprint), 'Binanın oturabileceği yaklaşık alan', `taks-${calculationAreaKind}`),
+    construction: metric(construction, formatArea(construction), 'Yaklaşık toplam emsale esas alan', `emsal-${calculationAreaKind}`),
+    outside: metric(outside, formatArea(outside), 'Teorik taban oturumu dışında kalan alan', `taks-${calculationAreaKind}`)
   };
 
   const possibilities = buildPossibilities(fields, { parcelArea, outside, floors });
   const missing = missingFields(fields, calculationsAllowed);
   const warnings = buildWarnings({ zoning, fields, missing, environment });
-  const explanation = buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing });
+  const explanation = buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing, calculationBasis });
   const technical = buildTechnical(properties, fields, zoning);
-  const claims = buildClaims({ parcel, zoning, environment, metrics });
+  const claims = buildClaims({ parcel, zoning: { ...zoning, fields }, environment, metrics, calculationBasis });
   const sources = dedupeSources([
     sourceFromParcel(parcel),
     ...(Array.isArray(zoning?.sources) ? zoning.sources : []),
     ...(environment?.source ? [environment.source] : []),
-    calculationSource(metrics)
+    calculationSource(metrics, calculationBasis)
   ].filter(Boolean));
 
   const status = zoning?.conflict
@@ -63,7 +75,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
         : 'cadastral-only';
 
   return {
-    version: '3.4.0',
+    version: '3.5.0',
     status,
     zoningStatus,
     calculatedAt: new Date().toISOString(),
@@ -84,6 +96,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
       configuration: zoning?.configuration || {},
       diagnostics: Array.isArray(zoning?.diagnostics) ? zoning.diagnostics.slice(0, 12) : [],
       fields,
+      fieldSources: zoning?.fieldSources || {},
       missing
     },
     sourceScan: zoning?.sourceScan || { status: 'exhausted', exhausted: true, attemptedCount: 0, reachableCount: 0, foundRecordCount: 0, attempts: [], sources: [] },
@@ -92,6 +105,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
     planRecords: Array.isArray(zoning?.planContext?.records) ? zoning.planContext.records : [],
     providerDiscovery: zoning?.providerDiscovery || { status: 'unavailable', actions: [], sources: [], municipalServices: [], catalog: { embedded: true, matchCount: 0 } },
     explanation,
+    calculationBasis,
     metrics,
     possibilities,
     warnings,
@@ -107,16 +121,19 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
 export function normalizeZoningFields(input = {}) {
   const setbacks = input.setbacks || {};
   const allowances = input.allowances || {};
+  const setbackConditions = normalizeSetbackConditions(input.setbackConditions);
   return {
     landUse: clean(input.landUse, 180),
+    netParcelArea: finitePositive(input.netParcelArea),
     taks: ratio(input.taks, 1),
     emsal: ratio(input.emsal, 15),
     floors: integer(input.floors, 1, 150),
     hmax: finitePositive(input.hmax),
     buildingOrder: clean(input.buildingOrder, 120),
-    frontSetback: finiteNonNegative(input.frontSetback ?? setbacks.front),
-    sideSetback: finiteNonNegative(input.sideSetback ?? setbacks.side),
-    rearSetback: finiteNonNegative(input.rearSetback ?? setbacks.rear),
+    frontSetback: normalizeSetbackScalar(input.frontSetback ?? setbacks.front, setbackConditions, 'front'),
+    sideSetback: normalizeSetbackScalar(input.sideSetback ?? setbacks.side, setbackConditions, 'side'),
+    rearSetback: normalizeSetbackScalar(input.rearSetback ?? setbacks.rear, setbackConditions, 'rear'),
+    setbackConditions,
     planName: clean(input.planName, 300),
     planNumber: clean(input.planNumber, 120),
     planScale: clean(input.planScale, 80),
@@ -134,7 +151,7 @@ export function normalizeZoningFields(input = {}) {
 export function compareZoningRecords(records) {
   const valid = records.filter((record) => record && record.fields);
   if (valid.length < 2) return { conflict: false, fields: [] };
-  const fields = ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
+  const fields = ['landUse', 'netParcelArea', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
   const conflicts = [];
   for (const field of fields) {
     const values = valid.map((record) => comparable(record.fields[field])).filter((value) => value != null);
@@ -143,7 +160,7 @@ export function compareZoningRecords(records) {
   return { conflict: conflicts.length > 0, fields: conflicts };
 }
 
-function buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing }) {
+function buildExplanation({ properties, parcelArea, zoning, fields, metrics, missing, calculationBasis }) {
   const location = [properties.province, properties.district, properties.neighbourhood].filter(Boolean).join(' / ');
   const intro = `${location ? `${location} sınırlarındaki ` : ''}${properties.block || '—'} ada ${properties.parcel || '—'} parsel${parcelArea != null ? ` ${formatArea(parcelArea)} büyüklüğündedir` : ' için alan bilgisi doğrulanamadı'}.`;
   if (zoning?.conflict) {
@@ -177,12 +194,13 @@ function buildExplanation({ properties, parcelArea, zoning, fields, metrics, mis
 
   const sentences = [intro];
   if (fields.landUse) sentences.push(`Doğrulanan kaynakta kullanım kararı “${fields.landUse}” olarak belirtilmiştir.`);
+  if (calculationBasis.netParcelArea != null) sentences.push(`Yapılaşma hesaplarında kadastro alanı yerine belgede doğrulanan ${formatArea(calculationBasis.netParcelArea)} net imar parseli alanı esas alınmıştır.`);
   if (metrics.floors.value != null) sentences.push(`En fazla ${metrics.floors.value} kat bilgisi bulunmaktadır.`);
-  if (metrics.footprint.value != null) sentences.push(`TAKS değerine göre binanın zeminde oturabileceği yaklaşık alan ${formatArea(metrics.footprint.value)} olarak hesaplanmıştır.`);
-  if (metrics.construction.value != null) sentences.push(`Emsal değerine göre yaklaşık toplam emsale esas inşaat alanı ${formatArea(metrics.construction.value)} olabilir.`);
-  if (metrics.outside.value != null) sentences.push(`Yaklaşık ${formatArea(metrics.outside.value)} alan bina oturumu dışında kalır; bu değer proje, çekme mesafeleri ve diğer kısıtlarla değişebilir.`);
-  const setbacks = [['ön', fields.frontSetback], ['yan', fields.sideSetback], ['arka', fields.rearSetback]].filter(([, value]) => value != null);
-  if (setbacks.length) sentences.push(`Yapı yaklaşma mesafeleri ${setbacks.map(([label, value]) => `${label} tarafta ${formatMeters(value)}`).join(', ')} olarak kaydedilmiştir.`);
+  if (metrics.footprint.value != null) sentences.push(`TAKS değerine göre ${calculationBasis.label.toLocaleLowerCase('tr-TR')} üzerinden binanın zeminde oturabileceği yaklaşık alan ${formatArea(metrics.footprint.value)} olarak hesaplanmıştır.`);
+  if (metrics.construction.value != null) sentences.push(`Emsal değerine göre ${calculationBasis.label.toLocaleLowerCase('tr-TR')} üzerinden yaklaşık toplam emsale esas inşaat alanı ${formatArea(metrics.construction.value)} olabilir.`);
+  if (metrics.outside.value != null) sentences.push(`Yaklaşık ${formatArea(metrics.outside.value)} teorik taban oturumu dışında kalır; bu değer bahçe alanı veya yapı yapılabilir alan değildir ve proje, çekme mesafeleri ile diğer kısıtlarla değişebilir.`);
+  const setbacks = setbackExplanationItems(fields);
+  if (setbacks.length) sentences.push(`Yapı yaklaşma mesafeleri ${setbacks.join(', ')} olarak kaydedilmiştir.`);
   if (missing.length) sentences.push(`Şu bilgiler henüz doğrulanamadı: ${missing.map(humanField).join(', ')}.`);
   if (zoning.status === 'user-evidence') sentences.push('Bu bölüm kullanıcı tarafından girilen resmî belge bilgilerine dayanır; bağlayıcı işlem öncesinde yetkili idareden teyit edilmelidir.');
   if (zoning.status === 'ai-assisted-official') sentences.push('Bu bölüm Plan AI tarafından e-Devlet girişi istemeyen açık resmî kaynaklardan kanıtıyla çıkarılan değerlere dayanır; bağlayıcı işlem öncesinde yetkili idare kaydı esas alınır.');
@@ -192,7 +210,6 @@ function buildExplanation({ properties, parcelArea, zoning, fields, metrics, mis
 function buildPossibilities(fields, context) {
   const values = { ...(fields.allowances || {}) };
   if (values.housing === 'unknown' && /konut|meskun|yerleşik/i.test(fields.landUse || '')) values.housing = 'conditional';
-  if (values.landscaping === 'unknown' && context.outside != null && context.outside > 0) values.landscaping = 'conditional';
   if (values.parking === 'unknown' && fields.parkingRequired === true) values.parking = 'required';
   return Object.entries(POSSIBILITY_LABELS).map(([key, label]) => {
     const status = normalizePossibility(values[key]);
@@ -287,42 +304,57 @@ function buildTechnical(properties, fields, zoning) {
     ['Kayıt metninde geçen göstergeler', formatRecordIndicators(zoning?.planContext?.records?.[0]?.indicators), zoning?.planContext?.records?.[0] ? 'Resmî kamu plan kayıt metni (güncel hak değildir)' : 'Doğrulanamadı'],
     ['Askı başlangıcı', zoning?.planContext?.records?.[0]?.announcementStart, zoning?.planContext?.records?.[0] ? 'Resmî kamu plan kaydı' : 'Doğrulanamadı'],
     ['Askı bitişi', zoning?.planContext?.records?.[0]?.announcementEnd, zoning?.planContext?.records?.[0] ? 'Resmî kamu plan kaydı' : 'Doğrulanamadı'],
-    ['Plan fonksiyonu', fields.landUse, zoningSourceLabel(zoning)],
-    ['TAKS', formatRatio(fields.taks), zoningSourceLabel(zoning)],
-    ['Emsal / KAKS', formatRatio(fields.emsal), zoningSourceLabel(zoning)],
-    ['Kat adedi', fields.floors != null ? String(fields.floors) : null, zoningSourceLabel(zoning)],
-    ['Yençok / Hmax', fields.hmax != null ? formatMeters(fields.hmax) : null, zoningSourceLabel(zoning)],
-    ['Yapı nizamı', fields.buildingOrder, zoningSourceLabel(zoning)],
-    ['Ön bahçe', fields.frontSetback != null ? formatMeters(fields.frontSetback) : null, zoningSourceLabel(zoning)],
-    ['Yan bahçe', fields.sideSetback != null ? formatMeters(fields.sideSetback) : null, zoningSourceLabel(zoning)],
-    ['Arka bahçe', fields.rearSetback != null ? formatMeters(fields.rearSetback) : null, zoningSourceLabel(zoning)],
-    ['Plan adı', fields.planName, zoningSourceLabel(zoning)],
-    ['Plan işlem / karar no', fields.planNumber, zoningSourceLabel(zoning)],
-    ['Plan ölçeği', fields.planScale, zoningSourceLabel(zoning)],
-    ['Yetkili idare', fields.authority, zoningSourceLabel(zoning)]
+    ['Plan fonksiyonu', fields.landUse, zoningFieldSourceLabel(zoning, 'landUse')],
+    ['Net imar parseli alanı', formatArea(fields.netParcelArea), zoningFieldSourceLabel(zoning, 'netParcelArea')],
+    ['TAKS', formatRatio(fields.taks), zoningFieldSourceLabel(zoning, 'taks')],
+    ['Emsal / KAKS', formatRatio(fields.emsal), zoningFieldSourceLabel(zoning, 'emsal')],
+    ['Kat adedi', fields.floors != null ? String(fields.floors) : null, zoningFieldSourceLabel(zoning, 'floors')],
+    ['Yençok / Hmax', fields.hmax != null ? formatMeters(fields.hmax) : null, zoningFieldSourceLabel(zoning, 'hmax')],
+    ['Yapı nizamı', fields.buildingOrder, zoningFieldSourceLabel(zoning, 'buildingOrder')],
+    ['Ön bahçe / yapı yaklaşma', fields.frontSetback != null ? formatMeters(fields.frontSetback) : null, zoningFieldSourceLabel(zoning, 'frontSetback')],
+    ['Yan bahçe / yapı yaklaşma', fields.sideSetback != null ? formatMeters(fields.sideSetback) : null, zoningFieldSourceLabel(zoning, 'sideSetback')],
+    ['Arka bahçe / yapı yaklaşma', fields.rearSetback != null ? formatMeters(fields.rearSetback) : null, zoningFieldSourceLabel(zoning, 'rearSetback')],
+    ['Cepheye / koşula göre çekme mesafeleri', formatSetbackConditions(fields.setbackConditions), zoningFieldSourceLabel(zoning, 'setbackConditions')],
+    ['Plan adı', fields.planName, zoningFieldSourceLabel(zoning, 'planName')],
+    ['Plan işlem / karar no', fields.planNumber, zoningFieldSourceLabel(zoning, 'planNumber')],
+    ['Plan ölçeği', fields.planScale, zoningFieldSourceLabel(zoning, 'planScale')],
+    ['Yetkili idare', fields.authority, zoningFieldSourceLabel(zoning, 'authority')]
   ];
   return rows.map(([label, value, source]) => ({ label, value: value ?? null, source }));
 }
 
-function buildClaims({ parcel, zoning, environment, metrics }) {
+function buildClaims({ parcel, zoning, environment, metrics, calculationBasis }) {
   const claims = [];
   if (parcel) {
     claims.push({ claim: 'Parsel konumu ve sınırı', value: 'TKGM geometrisi', sourceId: sourceFromParcel(parcel)?.id, confidence: 'source' });
     if (parcel.properties?.area != null || parcel.properties?.areaText) claims.push({ claim: 'Parsel alanı', value: formatArea(parcel.properties?.area ?? parseArea(parcel.properties?.areaText)), sourceId: sourceFromParcel(parcel)?.id, confidence: 'source' });
   }
-  const zSource = zoning?.sources?.[0];
   const evidenceSource = zoning?.sources?.find((item) => item?.trust === 'user-evidence');
   if (evidenceSource?.documentName) claims.push({ claim: 'Yüklenen resmî imar belgesi', value: evidenceSource.documentName, sourceId: evidenceSource.id, confidence: 'user-evidence' });
   if (evidenceSource?.documentHash) claims.push({ claim: 'Belge bütünlük özeti', value: evidenceSource.documentHash.slice(0, 16), sourceId: evidenceSource.id, confidence: 'document-integrity' });
   if (evidenceSource?.parcelMatchStatus) claims.push({ claim: 'Belge-parsel eşleşmesi', value: evidenceSource.parcelMatchStatus === 'exact' ? 'Ada/parsel metni eşleşti' : evidenceSource.parcelMatchStatus, sourceId: evidenceSource.id, confidence: 'user-evidence' });
   const fieldClaimMap = [
-    ['Plan fonksiyonu', zoning?.fields?.landUse], ['TAKS', formatRatio(zoning?.fields?.taks)], ['Emsal', formatRatio(zoning?.fields?.emsal)],
-    ['Kat adedi', zoning?.fields?.floors], ['Yençok / Hmax', zoning?.fields?.hmax != null ? formatMeters(zoning.fields.hmax) : null],
-    ['Yapı nizamı', zoning?.fields?.buildingOrder]
+    ['Plan fonksiyonu', zoning?.fields?.landUse, 'landUse'],
+    ['Net imar parseli alanı', formatArea(zoning?.fields?.netParcelArea), 'netParcelArea'],
+    ['TAKS', formatRatio(zoning?.fields?.taks), 'taks'],
+    ['Emsal', formatRatio(zoning?.fields?.emsal), 'emsal'],
+    ['Kat adedi', zoning?.fields?.floors, 'floors'],
+    ['Yençok / Hmax', zoning?.fields?.hmax != null ? formatMeters(zoning.fields.hmax) : null, 'hmax'],
+    ['Yapı nizamı', zoning?.fields?.buildingOrder, 'buildingOrder'],
+    ['Ön bahçe / yapı yaklaşma', zoning?.fields?.frontSetback != null ? formatMeters(zoning.fields.frontSetback) : null, 'frontSetback'],
+    ['Yan bahçe / yapı yaklaşma', zoning?.fields?.sideSetback != null ? formatMeters(zoning.fields.sideSetback) : null, 'sideSetback'],
+    ['Arka bahçe / yapı yaklaşma', zoning?.fields?.rearSetback != null ? formatMeters(zoning.fields.rearSetback) : null, 'rearSetback'],
+    ['Cepheye / koşula göre çekme mesafeleri', formatSetbackConditions(zoning?.fields?.setbackConditions), 'setbackConditions']
   ];
-  for (const [claim, value] of fieldClaimMap) if (value != null) claims.push({ claim, value: String(value), sourceId: zSource?.id, confidence: zoning.status });
+  for (const [claim, value, field] of fieldClaimMap) {
+    if (value != null) claims.push({ claim, value: String(value), sourceId: zoningFieldSourceId(zoning, field), confidence: zoning.status });
+  }
+  if (calculationBasis?.area != null && [metrics.footprint.value, metrics.construction.value].some((value) => value != null)) {
+    claims.push({ claim: 'Yapılaşma hesabının alan temeli', value: `${calculationBasis.label}: ${formatArea(calculationBasis.area)}`, sourceId: calculationBasis.netParcelArea != null ? zoningFieldSourceId(zoning, 'netParcelArea') : sourceFromParcel(parcel)?.id, confidence: calculationBasis.netParcelArea != null ? zoning.status : 'source' });
+  }
   if (metrics.footprint.value != null) claims.push({ claim: 'Yaklaşık bina oturumu', value: formatArea(metrics.footprint.value), sourceId: 'planlamasyon-calculation', confidence: 'calculated' });
   if (metrics.construction.value != null) claims.push({ claim: 'Yaklaşık toplam inşaat hakkı', value: formatArea(metrics.construction.value), sourceId: 'planlamasyon-calculation', confidence: 'calculated' });
+  if (metrics.outside.value != null) claims.push({ claim: 'Teorik taban oturumu dışında kalan alan', value: formatArea(metrics.outside.value), sourceId: 'planlamasyon-calculation', confidence: 'calculated' });
   if (zoning?.planContext?.status === 'available') {
     for (const match of zoning.planContext.matches || []) claims.push({ claim: 'Plan kapsamı', value: match.title || match.shortLabel || 'Kesinleşmiş plan kapsamı', sourceId: match.sourceId, confidence: 'public-information' });
     const metadata = zoning.planContext.metadata || {};
@@ -359,8 +391,14 @@ function buildClaims({ parcel, zoning, environment, metrics }) {
 }
 
 function missingFields(fields, allowed) {
-  if (!allowed) return ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'];
-  return ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'].filter((field) => fields[field] == null || fields[field] === '');
+  const required = ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'];
+  if (!allowed) return required;
+  const conditionTypeByField = { frontSetback: 'front', sideSetback: 'side', rearSetback: 'rear' };
+  return required.filter((field) => {
+    if (fields[field] != null && fields[field] !== '') return false;
+    const type = conditionTypeByField[field];
+    return !type || !fields.setbackConditions?.some((item) => item.type === type && finiteNonNegative(item.value) != null);
+  });
 }
 
 function buildNextActions(status, missing) {
@@ -395,7 +433,7 @@ function sourceFromParcel(parcel) {
   };
 }
 
-function calculationSource(metrics) {
+function calculationSource(metrics, calculationBasis) {
   if (![metrics.footprint.value, metrics.construction.value, metrics.outside.value].some((value) => value != null)) return null;
   return {
     id: 'planlamasyon-calculation',
@@ -404,7 +442,7 @@ function calculationSource(metrics) {
     url: null,
     kind: 'calculation',
     trust: 'calculated',
-    note: 'Hesaplar doğrulanan parsel alanı ile girilen TAKS/emsal değerlerinden üretilir; ruhsat projesi yerine geçmez.'
+    note: `Hesaplar ${calculationBasis?.label?.toLocaleLowerCase('tr-TR') || 'doğrulanan parsel alanı'} ile doğrulanmış TAKS/emsal değerlerinden üretilir; teorik sonuçlar ruhsat projesi yerine geçmez.`
   };
 }
 
@@ -427,6 +465,93 @@ function zoningSourceLabel(zoning) {
   return 'Doğrulanamadı';
 }
 
+function zoningFieldSourceLabel(zoning, field) {
+  const source = zoning?.fieldSources?.[field];
+  return source?.title || source?.provider || zoningSourceLabel(zoning);
+}
+
+function zoningFieldSourceId(zoning, field) {
+  return zoning?.fieldSources?.[field]?.id || zoning?.sources?.[0]?.id || null;
+}
+
+function normalizeSetbackConditions(value) {
+  let items = value;
+  if (typeof items === 'string') {
+    try { items = JSON.parse(items); } catch { items = []; }
+  }
+  if (!Array.isArray(items)) return [];
+  const normalized = [];
+  const seen = new Set();
+  for (const item of items.slice(0, 80)) {
+    if (!item || typeof item !== 'object') continue;
+    const type = normalizeSetbackType(item.type);
+    const distance = finiteNonNegative(item.value ?? item.distance ?? item.metres ?? item.meters);
+    if (!type || distance == null) continue;
+    const qualifier = clean(item.qualifier ?? item.frontage ?? item.side ?? item.condition, 160);
+    const normalizedItem = {
+      type,
+      qualifier,
+      value: distance,
+      unit: 'm',
+      excerpt: clean(item.excerpt, 520)
+    };
+    const key = `${type}|${qualifier?.toLocaleLowerCase('tr-TR') || ''}|${distance}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(normalizedItem);
+  }
+  return normalized;
+}
+
+function normalizeSetbackType(value) {
+  const text = String(value || '').toLocaleLowerCase('tr-TR').trim();
+  if (['front', 'ön', 'on'].includes(text)) return 'front';
+  if (['side', 'yan', 'sağ', 'sag', 'sol'].includes(text)) return 'side';
+  if (['rear', 'arka'].includes(text)) return 'rear';
+  return null;
+}
+
+function normalizeSetbackScalar(value, conditions, type) {
+  const explicit = finiteNonNegative(value);
+  const conditionalValues = (conditions || [])
+    .filter((item) => item.type === type)
+    .map((item) => finiteNonNegative(item.value))
+    .filter((item) => item != null);
+  const uniqueValues = [...new Set(conditionalValues.map((item) => comparable(item)))];
+  if (uniqueValues.length > 1) return null;
+  if (explicit != null && conditionalValues.length && comparable(explicit) !== uniqueValues[0]) return null;
+  return explicit ?? conditionalValues[0] ?? null;
+}
+
+function setbackExplanationItems(fields) {
+  const typeDefinitions = [
+    ['front', 'ön', fields.frontSetback],
+    ['side', 'yan', fields.sideSetback],
+    ['rear', 'arka', fields.rearSetback]
+  ];
+  const items = [];
+  for (const [type, label, scalar] of typeDefinitions) {
+    const conditions = (fields.setbackConditions || []).filter((item) => item.type === type);
+    const mustShowConditions = scalar == null || conditions.length > 1 || conditions.some((item) => item.qualifier);
+    if (conditions.length && mustShowConditions) {
+      for (const condition of conditions) {
+        items.push(`${condition.qualifier ? `${condition.qualifier} için ` : ''}${label} tarafta ${formatMeters(condition.value)}`);
+      }
+    } else if (scalar != null) {
+      items.push(`${label} tarafta ${formatMeters(scalar)}`);
+    }
+  }
+  return items;
+}
+
+function formatSetbackConditions(conditions) {
+  if (!Array.isArray(conditions) || !conditions.length) return null;
+  return conditions.map((item) => {
+    const type = ({ front: 'Ön', side: 'Yan', rear: 'Arka' })[item.type] || item.type;
+    return `${type}${item.qualifier ? ` · ${item.qualifier}` : ''}: ${formatMeters(item.value)}`;
+  }).join(' | ');
+}
+
 function normalizePossibility(value) {
   const text = String(value ?? 'unknown').toLowerCase().trim();
   if (['allowed', 'yes', 'true', 'yapılabilir', 'uygun'].includes(text)) return 'allowed';
@@ -437,7 +562,7 @@ function normalizePossibility(value) {
 }
 
 function humanField(field) {
-  return ({ landUse: 'plan fonksiyonu', taks: 'TAKS', emsal: 'emsal', floors: 'kat adedi', hmax: 'Yençok/Hmax', buildingOrder: 'yapı nizamı', frontSetback: 'ön bahçe mesafesi', sideSetback: 'yan bahçe mesafesi', rearSetback: 'arka bahçe mesafesi' })[field] || field;
+  return ({ landUse: 'plan fonksiyonu', netParcelArea: 'net imar parseli alanı', taks: 'TAKS', emsal: 'emsal', floors: 'kat adedi', hmax: 'Yençok/Hmax', buildingOrder: 'yapı nizamı', frontSetback: 'ön bahçe mesafesi', sideSetback: 'yan bahçe mesafesi', rearSetback: 'arka bahçe mesafesi', setbackConditions: 'cepheye göre çekme mesafeleri' })[field] || field;
 }
 
 function formatRecordScale(record) {

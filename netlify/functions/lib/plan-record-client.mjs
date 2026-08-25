@@ -326,7 +326,7 @@ async function fetchOfficialPage(url, fetchImpl, timeoutMs) {
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.4.0 (+https://planlamasyon.truva-ai.com)'
+        'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)'
       },
       redirect: 'follow',
       signal: controller.signal

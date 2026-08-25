@@ -1,7 +1,7 @@
 import { geometryCenter } from './geo.mjs';
 import { normalizeZoningFields } from './analysis-core.mjs';
 
-export const OPEN_OFFICIAL_SOURCE_VERSION = '3.4.0';
+export const OPEN_OFFICIAL_SOURCE_VERSION = '3.5.0';
 
 const CACHE = globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ = CACHE;
@@ -737,7 +737,7 @@ function portalHeaders(referer, cookieHeader = '') {
   return {
     Accept: 'text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.2',
     'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-    'User-Agent': 'Planlamasyon/3.4.0 (+https://planlamasyon.truva-ai.com)',
+    'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)',
     Referer: referer,
     Origin: url.origin,
     ...(cookieHeader ? { Cookie: cookieHeader } : {})
@@ -1297,7 +1297,7 @@ async function fetchWithTimeout(url, options, timeoutMs, fetchImpl) {
   } finally { clearTimeout(timer); }
 }
 function standardHeaders(accept) {
-  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.4.0 (+https://planlamasyon.truva-ai.com)' };
+  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.5.0 (+https://planlamasyon.truva-ai.com)' };
 }
 function withQuery(value, params) {
   const url = new URL(allowedPublicUrl(value));

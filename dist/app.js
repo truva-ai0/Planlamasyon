@@ -23,7 +23,8 @@ const elements = {
   resultSection: $('#resultSection'), analysisProgress: $('#analysisProgress'), analysisStatus: $('#analysisStatus'),
   analysisStatusIcon: $('#analysisStatusIcon'), analysisStatusTitle: $('#analysisStatusTitle'), analysisStatusText: $('#analysisStatusText'),
   parcelAddress: $('#parcelAddress'), plainExplanation: $('#plainExplanation'), metricArea: $('#metricArea'),
-  mobileResultSummary: $('#mobileResultSummary'), mobileSummaryParcel: $('#mobileSummaryParcel'), mobileSummaryCadastre: $('#mobileSummaryCadastre'), mobileSummaryZoning: $('#mobileSummaryZoning'), summaryGrid: $('#summaryGrid'),
+  mobileResultSummary: $('#mobileResultSummary'), mobileSummaryParcel: $('#mobileSummaryParcel'), mobileSummaryCadastre: $('#mobileSummaryCadastre'), mobileSummaryZoning: $('#mobileSummaryZoning'),
+  cadastreStatusChip: $('#cadastreStatusChip'), zoningStatusChip: $('#zoningStatusChip'), aiStatusChip: $('#aiStatusChip'), summaryGrid: $('#summaryGrid'),
   metricQuality: $('#metricQuality'), metricMapSheet: $('#metricMapSheet'), metricBlockParcel: $('#metricBlockParcel'),
   zoningOverviewTitle: $('#zoningOverviewTitle'), zoningOverviewText: $('#zoningOverviewText'), zoningMiniList: $('#zoningMiniList'),
   summaryFloors: $('#summaryFloors'), summaryFootprint: $('#summaryFootprint'), summaryConstruction: $('#summaryConstruction'), summaryOutside: $('#summaryOutside'),
@@ -35,7 +36,7 @@ const elements = {
   planRecordsCard: $('#planRecordsCard'), planRecordsBadge: $('#planRecordsBadge'), planRecordsIntro: $('#planRecordsIntro'), planRecordsGrid: $('#planRecordsGrid'),
   sourceScanCard: $('#sourceScanCard'), sourceScanBadge: $('#sourceScanBadge'), sourceScanIntro: $('#sourceScanIntro'), sourceScanGrid: $('#sourceScanGrid'), retrySourceScanButton: $('#retrySourceScanButton'),
   planAiCard: $('#planAiCard'), planAiBadge: $('#planAiBadge'), planAiIntro: $('#planAiIntro'), planAiEvidence: $('#planAiEvidence'), planAiAskButton: $('#planAiAskButton'),
-  roadmap: $('#roadmap'), claimList: $('#claimList'), sourceList: $('#sourceList'), favoriteButton: $('#favoriteButton'),
+  roadmap: $('#roadmap'), claimList: $('#claimList'), sourceList: $('#sourceList'), favoriteButton: $('#favoriteButton'), shareSummaryButton: $('#shareSummaryButton'),
   drawer: $('#sideDrawer'), drawerBackdrop: $('#drawerBackdrop'), drawerTitle: $('#drawerTitle'), drawerContent: $('#drawerContent'),
   drawerClose: $('#drawerClose'), toast: $('#toast')
 };
@@ -45,7 +46,8 @@ const state = {
   map: null, boundaryLayer: null, parcelLayer: null, parcelMarker: null, mapClickActive: false,
   lastQuery: null, toastTimer: null, analysisAbort: null, identityEnabled: false, user: null, session: null,
   syncTimer: null, syncInProgress: false, accountSyncEnabled: false,
-  mapBaseLayer: null, mapBaseFallbackActivated: false, mapBaseUserSelected: false, mapBaseLoaded: false
+  mapBaseLayer: null, mapBaseFallbackActivated: false, mapBaseUserSelected: false, mapBaseLoaded: false,
+  mapBaseAutomaticSwitches: 0, mapBaseFailureTimer: null
 };
 
 boot().catch((error) => {
@@ -259,60 +261,86 @@ function setupMap() {
   const map = L.map('parcelMap', { zoomControl: true, attributionControl: true, preferCanvas: true }).setView([39.05, 35.2], 6);
   const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 20,
+    maxNativeZoom: 18,
     attribution: 'Tiles © Esri, Maxar, Earthstar Geographics'
   });
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
+    maxNativeZoom: 19,
     attribution: '© OpenStreetMap katkıda bulunanlar'
   });
-  let osmErrors = 0;
-  let imageryErrors = 0;
+  const baseLayers = [osm, imagery];
+  const errorCounts = new Map(baseLayers.map((layer) => [layer, 0]));
   let automaticSwitch = false;
-  let fallbackTimer = null;
   const hideMapBaseStatus = () => { if (elements.mapBaseStatus) elements.mapBaseStatus.hidden = true; };
   const showMapBaseStatus = () => { if (elements.mapBaseStatus) elements.mapBaseStatus.hidden = false; };
+  const clearBaseFailureTimer = () => {
+    clearTimeout(state.mapBaseFailureTimer);
+    state.mapBaseFailureTimer = null;
+  };
+  const armBaseFailureTimer = () => {
+    clearBaseFailureTimer();
+    state.mapBaseFailureTimer = setTimeout(() => {
+      if (!state.mapBaseLoaded) showMapBaseStatus();
+    }, 8000);
+  };
   const markBaseLoaded = (layer) => {
     if (state.mapBaseLayer !== layer) return;
     state.mapBaseLoaded = true;
-    clearTimeout(fallbackTimer);
+    errorCounts.set(layer, 0);
+    clearBaseFailureTimer();
     hideMapBaseStatus();
   };
-  const switchToImageryFallback = () => {
-    if (state.mapBaseFallbackActivated || state.mapBaseUserSelected || state.mapBaseLoaded) return;
-    state.mapBaseFallbackActivated = true;
+  const activateBaseLayer = (layer, { automatic = false } = {}) => {
+    if (!layer || state.mapBaseLayer === layer) return;
     automaticSwitch = true;
-    if (map.hasLayer(osm)) map.removeLayer(osm);
-    imagery.addTo(map);
-    state.mapBaseLayer = imagery;
+    for (const candidate of baseLayers) if (candidate !== layer && map.hasLayer(candidate)) map.removeLayer(candidate);
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    state.mapBaseLayer = layer;
     state.mapBaseLoaded = false;
+    if (automatic) {
+      state.mapBaseAutomaticSwitches += 1;
+      state.mapBaseFallbackActivated = true;
+    }
+    hideMapBaseStatus();
+    armBaseFailureTimer();
     setTimeout(() => { automaticSwitch = false; }, 0);
   };
-  osm.on('load', () => markBaseLoaded(osm));
-  osm.on('tileerror', () => {
-    osmErrors += 1;
-    if (osmErrors >= 4) switchToImageryFallback();
-  });
-  imagery.on('load', () => markBaseLoaded(imagery));
-  imagery.on('tileerror', () => {
-    imageryErrors += 1;
-    if (imageryErrors >= 4 && state.mapBaseLayer === imagery) showMapBaseStatus();
-  });
+  const handleBaseFailure = (layer) => {
+    const count = Number(errorCounts.get(layer) || 0) + 1;
+    errorCounts.set(layer, count);
+    if (state.mapBaseLayer !== layer || count < 4) return;
+    const alternate = layer === osm ? imagery : osm;
+    if (state.mapBaseAutomaticSwitches < 2) activateBaseLayer(alternate, { automatic: true });
+    else showMapBaseStatus();
+  };
+  for (const layer of baseLayers) {
+    layer.on('tileload', () => markBaseLoaded(layer));
+    layer.on('tileerror', () => handleBaseFailure(layer));
+  }
   osm.addTo(map);
   state.mapBaseLayer = osm;
+  armBaseFailureTimer();
   L.control.layers({ Uydu: imagery, Harita: osm }, {}, { position: 'bottomright', collapsed: true }).addTo(map);
   map.on('baselayerchange', (event) => {
     state.mapBaseLayer = event.layer;
     state.mapBaseLoaded = false;
-    if (!automaticSwitch) state.mapBaseUserSelected = true;
+    if (!automaticSwitch) {
+      state.mapBaseUserSelected = true;
+      state.mapBaseAutomaticSwitches = 0;
+    }
+    errorCounts.set(event.layer, 0);
     hideMapBaseStatus();
+    armBaseFailureTimer();
   });
-  fallbackTimer = setTimeout(switchToImageryFallback, 4000);
   elements.mapBaseRetryButton?.addEventListener('click', () => {
-    osmErrors = 0;
-    imageryErrors = 0;
+    for (const layer of baseLayers) errorCounts.set(layer, 0);
+    state.mapBaseAutomaticSwitches = 0;
     state.mapBaseLoaded = false;
     hideMapBaseStatus();
     state.mapBaseLayer?.redraw?.();
+    if (state.parcelLayer) fitLayer(state.parcelLayer, 20);
+    armBaseFailureTimer();
   });
   state.map = map;
   map.on('click', onMapClick);
@@ -388,6 +416,9 @@ function renderCadastralBase(feature) {
   elements.zoningOverviewTitle.textContent = 'İmar ve yeni yapı hakkı kontrol ediliyor';
   elements.zoningOverviewText.textContent = 'Kadastro kaydından ayrı olarak güncel resmî plan ve yapılaşma koşulları aranıyor.';
   elements.zoningMiniList.innerHTML = '<div><dt>Resmî imar kaynakları</dt><dd>Kontrol ediliyor…</dd></div>';
+  setVerificationChip(elements.cadastreStatusChip, 'Kadastro doğrulandı', 'is-ok');
+  setVerificationChip(elements.zoningStatusChip, 'İmar kontrol ediliyor', 'is-loading');
+  setVerificationChip(elements.aiStatusChip, 'AI isteğe bağlı', 'is-neutral');
   renderDecisionSummary(null);
 }
 
@@ -433,6 +464,7 @@ async function analyzeCurrentParcel(explicitEvidence = undefined, { forceRefresh
 
 function renderAnalysis(analysis) {
   renderDecisionSummary(analysis);
+  renderVerificationStatus(analysis);
   renderAnalysisStatus(analysis);
   renderZoningOverview(analysis);
   renderSummary(analysis.metrics || {});
@@ -449,6 +481,25 @@ function renderAnalysis(analysis) {
   renderSources(analysis.sources || []);
   const needsCompletion = analysis.status !== 'complete';
   elements.zoningCompletionCard.hidden = !needsCompletion;
+}
+
+function setVerificationChip(element, text, variant) {
+  if (!element) return;
+  element.textContent = text;
+  element.className = `verification-chip ${variant || 'is-neutral'}`;
+}
+
+function renderVerificationStatus(analysis = {}) {
+  setVerificationChip(elements.cadastreStatusChip, 'Kadastro doğrulandı', 'is-ok');
+  const manualOnly = Boolean(analysis.manualOnly || analysis.zoningStatus === 'manual-only' || analysis.zoning?.manualOnly);
+  if (analysis.status === 'conflict') setVerificationChip(elements.zoningStatusChip, 'İmar kaynağı çelişkili', 'is-error');
+  else if (hasVerifiedZoning(analysis)) setVerificationChip(elements.zoningStatusChip, analysis.status === 'complete' ? 'İmar doğrulandı' : 'İmar kısmen doğrulandı', analysis.status === 'complete' ? 'is-ok' : 'is-warn');
+  else if (manualOnly) setVerificationChip(elements.zoningStatusChip, 'İmar: resmî sorgu gerekli', 'is-warn');
+  else setVerificationChip(elements.zoningStatusChip, 'İmar doğrulanamadı', 'is-warn');
+  const ai = analysis.planAi || {};
+  if (ai.status === 'applied') setVerificationChip(elements.aiStatusChip, 'AI kanıt destekli', 'is-ok');
+  else if (ai.status === 'review-required') setVerificationChip(elements.aiStatusChip, 'AI: kontrol gerekli', 'is-warn');
+  else setVerificationChip(elements.aiStatusChip, 'AI isteğe bağlı', 'is-neutral');
 }
 
 function renderAnalysisStatus(analysis) {
@@ -534,16 +585,42 @@ function renderZoningOverview(analysis) {
   const planCoverage = analysis.planContext?.coverageStatus === 'available'
     ? (analysis.planContext.matches || []).map((item) => item.shortLabel || item.title).filter(Boolean).join(' + ')
     : null;
+  const fieldSources = analysis.zoning?.fieldSources || {};
+  const conditionalSetbacks = Array.isArray(fields.setbackConditions) ? fields.setbackConditions : [];
+  const conditionsFor = (type) => conditionalSetbacks.filter((item) => item?.type === type && Number.isFinite(Number(item.value)));
+  const setbackValue = (type, scalar) => {
+    const conditions = conditionsFor(type);
+    if (conditions.length) return conditions.map((item) => `${item.qualifier ? `${item.qualifier}: ` : ''}${formatNumber(item.value)} m`).join(' · ');
+    return scalar != null ? `${formatNumber(scalar)} m` : null;
+  };
   const rows = [
-    ['Plan kapsamı', planCoverage],
-    [isPublicPlanRecord ? 'Eşleşen plan kayıt adı' : 'Plan adı', planMetadata.planName || fields.planName],
-    [isPublicPlanRecord ? 'Plan kayıt ölçeği' : 'Plan ölçeği', recordScale || fields.planScale],
-    ['Plan fonksiyonu', fields.landUse],
-    ['TAKS / Emsal', fields.taks != null || fields.emsal != null ? `${formatNumber(fields.taks) || '—'} / ${formatNumber(fields.emsal) || '—'}` : null],
-    ['Kat / Yençok', fields.floors != null || fields.hmax != null ? `${fields.floors != null ? `${fields.floors} kat` : '—'} / ${fields.hmax != null ? `${formatNumber(fields.hmax)} m` : '—'}` : null],
-    ['Yapı nizamı', fields.buildingOrder]
+    { label: 'Plan kapsamı', value: planCoverage },
+    { label: isPublicPlanRecord ? 'Eşleşen plan kayıt adı' : 'Plan adı', value: planMetadata.planName || fields.planName, field: 'planName' },
+    { label: isPublicPlanRecord ? 'Plan kayıt ölçeği' : 'Plan ölçeği', value: recordScale || fields.planScale, field: 'planScale' },
+    { label: 'Plan fonksiyonu', value: fields.landUse, field: 'landUse' },
+    { label: 'Net imar parseli alanı', value: fields.netParcelArea != null ? `${formatNumber(fields.netParcelArea)} m²` : null, field: 'netParcelArea' },
+    { label: 'TAKS', value: fields.taks != null ? formatNumber(fields.taks) : null, field: 'taks' },
+    { label: 'KAKS / Emsal', value: fields.emsal != null ? formatNumber(fields.emsal) : null, field: 'emsal' },
+    { label: 'Kat adedi', value: fields.floors != null ? `${formatNumber(fields.floors)} kat` : null, field: 'floors' },
+    { label: 'Yençok / Hmax', value: fields.hmax != null ? `${formatNumber(fields.hmax)} m` : null, field: 'hmax' },
+    { label: 'Yapı nizamı', value: fields.buildingOrder, field: 'buildingOrder' },
+    { label: conditionsFor('front').length > 1 ? 'Ön bahçe (cepheye göre)' : 'Ön bahçe', value: setbackValue('front', fields.frontSetback), field: conditionsFor('front').length ? 'setbackConditions' : 'frontSetback' },
+    { label: conditionsFor('side').length > 1 ? 'Yan bahçe (koşula göre)' : 'Yan bahçe', value: setbackValue('side', fields.sideSetback), field: conditionsFor('side').length ? 'setbackConditions' : 'sideSetback' },
+    { label: conditionsFor('rear').length > 1 ? 'Arka bahçe (koşula göre)' : 'Arka bahçe', value: setbackValue('rear', fields.rearSetback), field: conditionsFor('rear').length ? 'setbackConditions' : 'rearSetback' }
   ];
-  elements.zoningMiniList.innerHTML = rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? 'Doğrulanamadı')}</dd></div>`).join('');
+  elements.zoningMiniList.innerHTML = rows.map(({ label, value, field }) => {
+    const source = field ? fieldSources[field] : null;
+    const provenance = value != null ? zoningFieldProvenance(source) : '';
+    return `<div class="${value == null ? 'is-missing' : 'is-verified'}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? 'Resmî belgede bulunamadı')}${provenance ? `<small>${escapeHtml(provenance)}</small>` : ''}</dd></div>`;
+  }).join('');
+}
+
+function zoningFieldProvenance(source = {}) {
+  if (!source || typeof source !== 'object') return '';
+  const confidence = { high: 'yüksek güven', medium: 'orta güven', low: 'düşük güven' }[source.confidence || source.extractionConfidence] || '';
+  const rawDate = source.documentDate || source.retrievedAt || '';
+  const date = rawDate ? String(rawDate).slice(0, 10) : '';
+  return [source.title || source.provider, date, confidence].filter(Boolean).join(' · ');
 }
 
 function renderSummary(metrics) {
@@ -647,9 +724,18 @@ function renderEnvironment(environment) {
     elements.environmentGrid.innerHTML = '<div class="environment-empty">Belirlenen yarıçap içinde sınıflandırılmış yakın çevre kaydı bulunamadı.</div>';
     return;
   }
-  elements.environmentGrid.innerHTML = environment.categories.map((category) => `
-    <section class="environment-category"><h4>${escapeHtml(category.label)}</h4><div class="nearby-list">${category.items.map((item) => `
-      <div class="nearby-item"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.distanceText || '—')}</span></div>`).join('')}</div></section>`).join('');
+  elements.environmentGrid.innerHTML = environment.categories.map((category) => {
+    const seen = new Set();
+    const items = (Array.isArray(category.items) ? category.items : []).filter((item) => {
+      const key = String(item?.name || '').trim().toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ');
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return `
+    <section class="environment-category"><h4>${escapeHtml(category.label)}</h4><div class="nearby-list">${items.map((item) => `
+      <div class="nearby-item"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.distanceText || '—')}</span></div>`).join('')}</div></section>`;
+  }).join('');
 }
 
 function normalizedDisplayKey(item = {}) {
@@ -857,9 +943,13 @@ function renderSourceScan(scan = {}) {
 
 function renderPlanAi(planAi = {}) {
   if (!elements.planAiCard) return;
-  elements.planAiCard.hidden = false;
-  elements.planAiBadge.className = 'data-badge';
   const status = planAi.status || 'disabled';
+  const evidence = Array.isArray(planAi.evidence) ? planAi.evidence : [];
+  const fieldEvidence = planAi.fieldEvidence && typeof planAi.fieldEvidence === 'object' ? planAi.fieldEvidence : {};
+  const hasEvidence = evidence.length > 0 || Object.keys(fieldEvidence).length > 0;
+  elements.planAiCard.hidden = !hasEvidence && !['applied', 'review-required'].includes(status);
+  if (elements.planAiCard.hidden) return;
+  elements.planAiBadge.className = 'data-badge';
   const fieldCount = Number(planAi.evidenceBackedFields?.length || 0);
   const evidenceCount = Number(planAi.evidenceCount || 0);
   if (status === 'applied') {
@@ -883,9 +973,7 @@ function renderPlanAi(planAi = {}) {
     elements.planAiBadge.textContent = 'Sınırlı mod';
     elements.planAiIntro.textContent = `${planAi.message || 'Plan AI bu analizde kullanılamadı.'} Mevcut sonuçlar yine güvenli özet modunda açıklanabilir.`;
   }
-  const evidence = Array.isArray(planAi.evidence) ? planAi.evidence : [];
-  const fieldEvidence = planAi.fieldEvidence && typeof planAi.fieldEvidence === 'object' ? planAi.fieldEvidence : {};
-  const fieldLabels = { landUse:'Plan fonksiyonu', taks:'TAKS', emsal:'Emsal', floors:'Kat', hmax:'Yençok / Hmax', buildingOrder:'Yapı nizamı', frontSetback:'Ön bahçe', sideSetback:'Yan bahçe', rearSetback:'Arka bahçe' };
+  const fieldLabels = { landUse:'Plan fonksiyonu', netParcelArea:'Net imar parseli alanı', taks:'TAKS', emsal:'Emsal', floors:'Kat', hmax:'Yençok / Hmax', buildingOrder:'Yapı nizamı', frontSetback:'Ön bahçe', sideSetback:'Yan bahçe', rearSetback:'Arka bahçe', setbackConditions:'Koşullu çekme mesafeleri' };
   const fieldRows = Object.entries(fieldEvidence).slice(0, 12).map(([key, item]) => `
     <div class="plan-ai-evidence-item"><span><strong>${escapeHtml(fieldLabels[key] || key)}</strong><small>${escapeHtml(item.quote || '')}</small></span>${item.sourceUrl ? `<a href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">Kaynak ↗</a>` : ''}</div>`).join('');
   const sourceRows = evidence.slice(0, 6).map((item) => `
@@ -899,12 +987,12 @@ function renderPlanAi(planAi = {}) {
 
 function openPlanAiDrawer() {
   if (!state.analysis) {
-    openDrawer('✦ Plan AI · v3.4.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
+    openDrawer('✦ Plan AI · v3.5.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
     return;
   }
   const ai = state.analysis.planAi || {};
   const degraded = Boolean(ai.degraded || ai.configured === false || ['disabled', 'unavailable', 'no-values', 'review-required'].includes(ai.status));
-  openDrawer('✦ Plan AI · v3.4.0', `
+  openDrawer('✦ Plan AI · v3.5.0', `
     <div class="plan-ai-chat">
       <div class="plan-ai-chat-status"><strong>${escapeHtml(degraded ? 'Sınırlı açıklama modu' : 'Plan AI aktif')}</strong><span>${escapeHtml(degraded ? 'Canlı AI yanıt veremezse yalnız mevcut analizde yazan değerler özetlenir; yeni imar değeri tahmin edilmez.' : ai.message || 'Mevcut analiz üzerinden soru sorabilirsiniz.')}</span></div>
       <div class="plan-ai-suggestions">
@@ -930,12 +1018,12 @@ function openPlanAiDrawer() {
       if (ai.configured === false) throw Object.assign(new Error('Canlı Plan AI bağlantısı etkin değil.'), { code: 'PLAN_AI_DEGRADED' });
       const result = await apiPost('/api/plan-ai', { question, analysis: state.analysis }, { timeoutMs: 35_000 });
       const answerNotice = result.degraded
-        ? `Sınırlı mod · ${result.notice || result.errorCode || 'Canlı servis yanıtı kullanılamadı'}`
+        ? `Sınırlı mod · ${result.notice || 'Mevcut doğrulanmış sonuç özetlendi'}`
         : result.model || 'Plan AI';
       answer.innerHTML = `<p>${escapeHtml(result.answer || 'Yanıt alınamadı.').replace(/\n/g, '<br>')}</p><small>${escapeHtml(answerNotice)}</small>`;
     } catch (error) {
       const fallback = buildPlanAiFallbackAnswer(question, state.analysis);
-      answer.innerHTML = `<p>${escapeHtml(fallback).replace(/\n/g, '<br>')}</p><small>Sınırlı mod · ${escapeHtml(readableError(error))}</small>`;
+      answer.innerHTML = `<p>${escapeHtml(fallback).replace(/\n/g, '<br>')}</p><small>Sınırlı mod · Canlı yanıt kullanılamadı; yalnız mevcut analiz özetlendi.</small>`;
     } finally {
       send.disabled = false; send.textContent = degraded ? 'Mevcut Sonucu Açıkla' : "Plan AI'ye Sor";
     }
@@ -1066,6 +1154,7 @@ function resetAnalysisPanels() {
 }
 
 function setupActions() {
+  elements.analysisStatus?.insertAdjacentElement('afterend', elements.zoningCompletionCard);
   elements.resetMap.addEventListener('click', resetMapToTurkey);
   elements.planAiAskButton?.addEventListener('click', () => openPlanAiDrawer());
   elements.retrySourceScanButton?.addEventListener('click', async () => {
@@ -1080,8 +1169,47 @@ function setupActions() {
     showToast(state.mapClickActive ? 'Haritada bir noktaya dokunun.' : 'Haritadan sorgulama kapatıldı.');
   });
   elements.favoriteButton.addEventListener('click', toggleFavorite);
+  elements.shareSummaryButton?.addEventListener('click', shareCurrentSummary);
+  elements.metricQuality?.addEventListener('click', () => elements.metricQuality.classList.toggle('is-expanded'));
   elements.addEvidenceButton.addEventListener('click', openEvidenceForm);
   elements.requestAnalysisButton.addEventListener('click', openRequestForm);
+}
+
+async function shareCurrentSummary() {
+  if (!state.parcelFeature) return showToast('Önce bir parsel sorgulayın.');
+  const text = buildShareSummary();
+  const data = { title: 'Planlamasyon parsel özeti', text };
+  try {
+    if (navigator.share) await navigator.share(data);
+    else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      showToast('Doğrulanmış parsel özeti panoya kopyalandı.');
+    } else showToast('Paylaşım bu tarayıcıda kullanılamıyor.');
+  } catch (error) {
+    if (error?.name !== 'AbortError') showToast('Özet paylaşılamadı.');
+  }
+}
+
+function buildShareSummary() {
+  const p = state.parcelFeature?.properties || {};
+  const analysis = state.analysis || {};
+  const fields = analysis.zoning?.fields || {};
+  const metrics = analysis.metrics || {};
+  const lines = [
+    `Parsel: ${[p.province, p.district, p.neighbourhood].filter(Boolean).join(' / ')} · ${p.block || '—'}/${p.parcel || '—'}`,
+    `Kadastro alanı: ${formatArea(p.area, p.areaText)}`,
+    `İmar durumu: ${hasVerifiedZoning(analysis) ? 'doğrulanan resmî değerlere dayanıyor' : 'henüz doğrulanmadı'}`
+  ];
+  if (fields.netParcelArea != null) lines.push(`Net imar parseli alanı: ${formatNumber(fields.netParcelArea)} m²`);
+  if (fields.landUse) lines.push(`Plan fonksiyonu: ${fields.landUse}`);
+  if (fields.taks != null) lines.push(`TAKS: ${formatNumber(fields.taks)}`);
+  if (fields.emsal != null) lines.push(`KAKS/Emsal: ${formatNumber(fields.emsal)}`);
+  if (fields.floors != null) lines.push(`Kat: ${formatNumber(fields.floors)}`);
+  if (fields.hmax != null) lines.push(`Yençok/Hmax: ${formatNumber(fields.hmax)} m`);
+  if (metrics.footprint?.value != null) lines.push(`Teorik taban oturumu: ${metrics.footprint.display}`);
+  if (metrics.construction?.value != null) lines.push(`Emsale esas teorik alan: ${metrics.construction.display}`);
+  lines.push('Bilgi amaçlıdır; ruhsat ve kesin hak için yetkili idarenin güncel kaydı esas alınır.');
+  return lines.join('\n');
 }
 
 async function onMapClick(event) {
@@ -1109,11 +1237,11 @@ function openEvidenceForm() {
   const allowanceLabels = { housing: 'Konut', villa: 'Villa', pool: 'Havuz', landscaping: 'Bahçe / Peyzaj', roof: 'Çatı', terraceRoof: 'Teras çatı', balcony: 'Balkon', basement: 'Bodrum', parking: 'Otopark', solar: 'Güneş paneli' };
   openDrawer('Resmî İmar Belgesini Yükle ve Oku', `
     <form class="drawer-form" id="evidenceForm">
-      <div class="drawer-help document-reader-intro"><strong>Son çare: resmî belgeyle tamamlayın.</strong><br>Planlamasyon önce e-Devlet istemeyen açık resmî kaynakları otomatik tarar. Sonuç bulunamazsa güncel imar durumu, imar çapı veya plan notunu PDF, fotoğraf, metin ya da resmî bağlantı olarak ekleyebilirsiniz. Sistem ada/parseli karşılaştırır; TAKS, emsal, kat, Yençok ve çekme mesafelerini bulup alanları doldurur. Son onay yine sizdedir.</div>
+      <div class="drawer-help document-reader-intro"><strong>Resmî belgeyi doğrulanmış hesaba dönüştürün.</strong><br>Güncel imar durumu, imar çapı veya plan notunu PDF, fotoğraf, metin ya da resmî bağlantı olarak ekleyebilirsiniz. Sistem ada/parseli karşılaştırır; net imar alanı, TAKS, KAKS/emsal, kat, Yençok ve cepheye bağlı çekme mesafelerini kanıtıyla doldurur. Son onay yine sizdedir.</div>
 
       <section class="document-reader-card" aria-labelledby="documentReaderTitle">
         <div class="document-reader-heading">
-          <div><span class="section-kicker">Belge okuma motoru · v3.4.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
+          <div><span class="section-kicker">Belge okuma motoru · v3.5.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
           <span class="data-badge" id="documentReaderBadge">Hazır</span>
         </div>
         <div class="document-tabs" role="tablist" aria-label="Belge giriş yöntemi">
@@ -1152,6 +1280,7 @@ function openEvidenceForm() {
       <input type="hidden" name="extractionConfidence" value="${escapeHtml(saved.extractionConfidence || '')}">
       <input type="hidden" name="parcelMatchStatus" value="${escapeHtml(saved.parcelMatchStatus || '')}">
       <input type="hidden" name="fieldEvidence" value="${escapeHtml(JSON.stringify(saved.fieldEvidence || {}))}">
+      <input type="hidden" name="setbackConditions" value="${escapeHtml(JSON.stringify(saved.setbackConditions || []))}">
       <input type="hidden" name="extractedAt" value="${escapeHtml(saved.extractedAt || '')}">
 
       <div class="document-review-divider"><span>Okunan değerleri kontrol edin</span></div>
@@ -1167,6 +1296,7 @@ function openEvidenceForm() {
       <h4>Yapılaşma koşulları</h4>
       <div class="field"><label>Plan fonksiyonu</label><input name="landUse" value="${escapeHtml(saved.landUse || '')}" placeholder="Konut alanı, ticaret alanı..."></div>
       <div class="drawer-form-grid">
+        <div class="field"><label>Net imar parseli alanı (m²)</label><input name="netParcelArea" inputmode="decimal" value="${escapeHtml(saved.netParcelArea ?? '')}" placeholder="Belgede açıkça yazıyorsa"></div>
         <div class="field"><label>TAKS</label><input name="taks" inputmode="decimal" value="${escapeHtml(saved.taks ?? '')}" placeholder="0,30"></div>
         <div class="field"><label>Emsal / KAKS</label><input name="emsal" inputmode="decimal" value="${escapeHtml(saved.emsal ?? '')}" placeholder="1,50"></div>
         <div class="field"><label>Kat adedi</label><input name="floors" inputmode="numeric" value="${escapeHtml(saved.floors ?? '')}" placeholder="5"></div>
@@ -1400,13 +1530,13 @@ async function ocrImages(images, onProgress) {
 
 function applyParsedEvidenceToForm(form, parsed) {
   const evidence = parsed.evidence || {};
-  const names = ['sourceTitle','authority','sourceUrl','planName','planNumber','planScale','planDate','landUse','taks','emsal','floors','hmax','buildingOrder','frontSetback','sideSetback','rearSetback','parkingRequired','roadDedicationPossible','floodDataStatus','planNotes','constraints','documentName','documentMimeType','documentHash','parserVersion','documentType','extractionConfidence','parcelMatchStatus','fieldEvidence','extractedAt'];
+  const names = ['sourceTitle','authority','sourceUrl','planName','planNumber','planScale','planDate','landUse','netParcelArea','taks','emsal','floors','hmax','buildingOrder','frontSetback','sideSetback','rearSetback','setbackConditions','parkingRequired','roadDedicationPossible','floodDataStatus','planNotes','constraints','documentName','documentMimeType','documentHash','parserVersion','documentType','extractionConfidence','parcelMatchStatus','fieldEvidence','extractedAt'];
   for (const name of names) {
     const field = form.elements[name];
     if (!field) continue;
     let value = evidence[name];
     if (name === 'constraints' && Array.isArray(value)) value = value.join('\n');
-    if (name === 'fieldEvidence' && typeof value === 'object') value = JSON.stringify(value);
+    if ((name === 'fieldEvidence' || name === 'setbackConditions') && typeof value === 'object') value = JSON.stringify(value);
     if (typeof value === 'boolean') value = String(value);
     if (value != null) field.value = value;
   }
@@ -1459,11 +1589,14 @@ function evidenceFromForm(formData) {
   for (const key of ['housing','villa','pool','landscaping','roof','terraceRoof','balcony','basement','parking','solar']) allowances[key] = value(`allowance_${key}`) || 'unknown';
   let fieldEvidence = {};
   try { fieldEvidence = JSON.parse(value('fieldEvidence') || '{}'); } catch {}
+  let setbackConditions = [];
+  try { setbackConditions = JSON.parse(value('setbackConditions') || '[]'); } catch {}
+  if (!Array.isArray(setbackConditions)) setbackConditions = [];
   return {
     confirmed: formData.get('confirmed') === 'on', sourceTitle: value('sourceTitle'), authority: value('authority'), sourceUrl: value('sourceUrl') || null,
     planName: value('planName'), planNumber: value('planNumber'), planScale: value('planScale'), planDate: value('planDate'), landUse: value('landUse'),
-    taks: number('taks'), emsal: number('emsal'), floors: number('floors'), hmax: number('hmax'), buildingOrder: value('buildingOrder'),
-    frontSetback: number('frontSetback'), sideSetback: number('sideSetback'), rearSetback: number('rearSetback'), allowances,
+    netParcelArea: number('netParcelArea'), taks: number('taks'), emsal: number('emsal'), floors: number('floors'), hmax: number('hmax'), buildingOrder: value('buildingOrder'),
+    frontSetback: number('frontSetback'), sideSetback: number('sideSetback'), rearSetback: number('rearSetback'), setbackConditions, allowances,
     parkingRequired: parseBoolean(value('parkingRequired')), roadDedicationPossible: parseBoolean(value('roadDedicationPossible')),
     floodDataStatus: value('floodDataStatus') || null, planNotes: value('planNotes'), constraints: value('constraints').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
     documentName: value('documentName') || null, documentMimeType: value('documentMimeType') || null, documentHash: value('documentHash') || null,

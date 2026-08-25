@@ -146,7 +146,7 @@ main{width:min(1240px,calc(100% - 34px));margin:auto;padding:28px 0 60px}.hero{m
 @media (max-width:640px){.plan-ai-evidence-item,.plan-ai-source-item{align-items:stretch}.plan-ai-actions .button,.source-scan-actions .button{width:100%}}
 
 
-/* v3.4.0 kadastro/imar ayrımı, mobil karar özeti ve harita yedeği */
+/* v3.5.0 kadastro/imar ayrımı, mobil karar özeti ve harita yedeği */
 .record-badge-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .rights-warning-badge{padding:7px 10px;border-radius:999px;border:1px solid rgba(239,182,93,.35);background:rgba(239,182,93,.08);color:var(--amber);font-size:11px;font-weight:800}
 .mobile-result-summary{display:none;margin-bottom:14px;padding:18px}
@@ -165,7 +165,7 @@ main{width:min(1240px,calc(100% - 34px));margin:auto;padding:28px 0 60px}.hero{m
 }
 
 
-/* v3.4.0 nationwide official routing, truthful results and mobile Plan AI */
+/* v3.5.0 nationwide official routing, truthful results and mobile Plan AI */
 .context-safe-note{display:grid;gap:8px;text-align:left}
 .context-safe-note strong{color:var(--text)}
 .context-safe-note span{color:var(--muted);line-height:1.6}
@@ -195,4 +195,34 @@ main{width:min(1240px,calc(100% - 34px));margin:auto;padding:28px 0 60px}.hero{m
   .compact-body{padding:16px 20px 20px}
   .side-drawer.is-plan-ai{max-height:94dvh}
   .side-drawer.is-plan-ai .drawer-content{max-height:calc(94dvh - 64px)}
+}
+
+/* v3.5.0 — doğrulanmış belge hesabı, kaynak izi ve mobil karar özeti */
+.result-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.verification-status-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.verification-chip{display:inline-flex;align-items:center;min-height:28px;padding:5px 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:10px;font-weight:800;line-height:1.25}
+.verification-chip.is-ok{border-color:rgba(56,204,140,.28);background:rgba(56,204,140,.09);color:var(--green)}
+.verification-chip.is-warn{border-color:rgba(239,182,93,.32);background:rgba(239,182,93,.09);color:var(--amber)}
+.verification-chip.is-error{border-color:rgba(255,119,134,.32);background:rgba(255,119,134,.09);color:var(--red)}
+.verification-chip.is-loading{border-color:rgba(77,145,255,.3);background:rgba(77,145,255,.09);color:#78afff}
+.verification-chip.is-neutral{color:var(--muted)}
+.zoning-mini-list>div{grid-template-columns:minmax(120px,.75fr) minmax(0,1.25fr);align-items:start}
+.zoning-mini-list>div.is-verified{box-shadow:inset 3px 0 0 rgba(56,204,140,.35)}
+.zoning-mini-list>div.is-missing{box-shadow:inset 3px 0 0 rgba(239,182,93,.25)}
+.zoning-mini-list dd{min-width:0;word-break:break-word}
+.zoning-mini-list dd small{display:block;margin-top:5px;color:var(--muted);font-size:10px;font-weight:600;line-height:1.35}
+.completion-card{border-color:rgba(77,145,255,.28);box-shadow:0 15px 45px rgba(4,17,31,.14),inset 0 1px 0 rgba(255,255,255,.03)}
+#metricQuality{cursor:pointer;white-space:nowrap}
+#metricQuality.is-expanded{white-space:normal;overflow:visible;text-overflow:clip}
+@media(max-width:1100px), (hover:none) and (pointer:coarse){
+  .side-drawer.is-plan-ai{max-height:74dvh}
+  .side-drawer.is-plan-ai .drawer-content{max-height:calc(74dvh - 64px)}
+}
+@media(max-width:640px){
+  .result-actions{justify-content:flex-start;width:100%}
+  .result-actions .favorite-button{flex:1;width:auto;min-width:140px;padding:0 11px}
+  .verification-status-row{display:grid;grid-template-columns:1fr}
+  .verification-chip{justify-content:center;text-align:center}
+  .zoning-mini-list>div{grid-template-columns:1fr;gap:6px}
+  .zoning-mini-list dd{text-align:left}
 }

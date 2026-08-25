@@ -54,7 +54,7 @@ function scanEnv(extra = {}) {
   };
 }
 
-test('v3.4.0 Şişli built-in portalı kullanım koşullarıyla manual-only yönlendirir', async () => {
+test('v3.5.0 Şişli built-in portalı kullanım koşullarıyla manual-only yönlendirir', async () => {
   const provider = await discoverMunicipalityProvider({
     parcel: sisliParcel,
     query: sisliParcel.properties,
@@ -313,7 +313,7 @@ test('Yençok kat değeri floors olur, metre Hmax ile karışmaz ve yapinizami e
     ].join('\n'),
     query: fictionalQuery
   });
-  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.4.0');
+  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.5.0');
   assert.equal(parsed.fields.floors, 25);
   assert.equal(parsed.fields.hmax, undefined);
   assert.equal(parsed.fields.buildingOrder, 'Ayrık');
@@ -379,7 +379,7 @@ test('açık kaynak etiket normalizasyonu yapinizami ve Yençok kat ayrımını 
     yapinizami: 'Ayrık Nizam',
     yencok: '25 kat'
   });
-  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.4.0');
+  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.5.0');
   assert.equal(fields.buildingOrder, 'Ayrık');
   assert.equal(fields.floors, 25);
   assert.equal(fields.hmax, null);

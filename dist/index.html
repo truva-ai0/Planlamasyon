@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet" href="/styles.css?v=3.4.0">
+  <link rel="stylesheet" href="/styles.css?v=3.5.0">
   <script>
     (() => {
       let theme = 'dark';
@@ -67,7 +67,7 @@
         <p>Parselinizi bulun. Planlamasyon kadastro, doğrulanabilen plan bilgileri, mevzuat ve yakın çevre verilerini tek sonuçta toplasın.</p>
         <div class="hero-actions">
           <button class="button button-primary" id="startButton" type="button">Projeni Başlat <span aria-hidden="true">→</span></button>
-          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.2</small></button>
+          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.5</small></button>
         </div>
         <div class="trust-row">
           <span>✓ Kaynak–sonuç ilişkisi</span>
@@ -141,7 +141,10 @@
     <section class="section result-section" id="resultSection" hidden aria-labelledby="resultTitle">
       <div class="result-topline">
         <div><span class="section-kicker">Parsel bulundu</span><h2 id="resultTitle">Parseliniz hakkında</h2></div>
-        <button class="favorite-button" id="favoriteButton" type="button">☆ Favorilere Ekle</button>
+        <div class="result-actions">
+          <button class="favorite-button" id="shareSummaryButton" type="button">↗ Özeti Paylaş</button>
+          <button class="favorite-button" id="favoriteButton" type="button">☆ Favorilere Ekle</button>
+        </div>
       </div>
 
       <div class="analysis-progress card" id="analysisProgress" role="status" aria-live="polite">
@@ -156,6 +159,11 @@
           <div><dt>Tapu/kadastro kaydı</dt><dd id="mobileSummaryCadastre">Hazırlanıyor</dd></div>
           <div><dt>İmar ve yapı hakkı</dt><dd id="mobileSummaryZoning">Kontrol ediliyor</dd></div>
         </dl>
+        <div class="verification-status-row">
+          <span class="verification-chip is-ok" id="cadastreStatusChip">Kadastro doğrulandı</span>
+          <span class="verification-chip is-loading" id="zoningStatusChip">İmar kontrol ediliyor</span>
+          <span class="verification-chip is-neutral" id="aiStatusChip">AI isteğe bağlı</span>
+        </div>
       </aside>
 
       <div class="analysis-status card" id="analysisStatus" hidden>
@@ -198,7 +206,7 @@
         <article class="summary-card card"><span class="summary-icon">▥</span><strong id="summaryFloors">—</strong><small>En fazla kat</small></article>
         <article class="summary-card card"><span class="summary-icon">⌂</span><strong id="summaryFootprint">—</strong><small>Binanın oturabileceği yaklaşık alan</small></article>
         <article class="summary-card card"><span class="summary-icon">⌁</span><strong id="summaryConstruction">—</strong><small>Yaklaşık toplam inşaat hakkı</small></article>
-        <article class="summary-card card"><span class="summary-icon">♧</span><strong id="summaryOutside">—</strong><small>Bina dışında kalan yaklaşık alan</small></article>
+        <article class="summary-card card"><span class="summary-icon">♧</span><strong id="summaryOutside">—</strong><small>Teorik taban oturumu dışında kalan alan</small></article>
       </div>
 
       <div class="analysis-columns">
@@ -220,7 +228,7 @@
         </div>
         <div class="completion-actions">
           <a class="button button-secondary" id="primaryOfficialServiceLink" href="https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html" target="_blank" rel="noopener noreferrer">Resmî İmar Sorgusunu Aç ↗</a>
-          <button class="button button-secondary" id="addEvidenceButton" type="button">Son Çare: Resmî Belge Ekle</button>
+          <button class="button button-primary" id="addEvidenceButton" type="button">Resmî Belge Yükle ve Hesapla</button>
           <button class="button button-primary" id="requestAnalysisButton" type="button">Analiz Talebi Gönder</button>
         </div>
       </article>
@@ -294,7 +302,7 @@
     </section>
 
     <footer class="site-footer">
-      <span>© 2026 PLANLAMASYON · v3.4.0</span>
+      <span>© 2026 PLANLAMASYON · v3.5.0</span>
       <nav><button data-footer-panel="about">Hakkımızda</button><button data-footer-panel="contact">İletişim</button><button data-footer-panel="privacy">Gizlilik</button><button data-footer-panel="terms">Kullanım Koşulları</button></nav>
     </footer>
   </main>
@@ -308,6 +316,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="/app.js?v=3.4.0"></script>
+  <script type="module" src="/app.js?v=3.5.0"></script>
 </body>
 </html>

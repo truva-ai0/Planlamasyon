@@ -12,7 +12,7 @@ function source(id, trust = 'verified') {
   return { id, title: `Kaynak ${id}`, provider: 'Yetkili idare', trust, url: `https://example.gov.tr/${id}` };
 }
 
-test('v3.4.0 çelişmeyen resmî kayıtların tamamlayıcı alanlarını ve alan kaynaklarını birleştirir', () => {
+test('v3.5.0 çelişmeyen resmî kayıtların tamamlayıcı alanlarını ve alan kaynaklarını birleştirir', () => {
   const primary = {
     fields: { landUse: 'Konut Alanı', taks: 0.3, planName: 'Uygulama İmar Planı' },
     source: source('belediye')
@@ -31,7 +31,7 @@ test('v3.4.0 çelişmeyen resmî kayıtların tamamlayıcı alanlarını ve alan
   assert.deepEqual(result.conflictFields, []);
 });
 
-test('v3.4.0 farklı dolu değerleri sessizce ezmek yerine çelişkili bırakır', () => {
+test('v3.5.0 farklı dolu değerleri sessizce ezmek yerine çelişkili bırakır', () => {
   const first = { fields: { taks: 0.3, allowances: { pool: 'allowed' } }, source: source('a') };
   const second = { fields: { taks: 0.4, allowances: { pool: 'prohibited' } }, source: source('b') };
   const result = mergeComplementaryZoningRecords([first, second], first);
@@ -94,7 +94,7 @@ test('manual-only sonuç TAKS/emsal/kat tahmini ve yapılaşma hesabı üretmez'
   assert.ok(analysis.possibilities.every((item) => item.status === 'unknown'));
 });
 
-test('v3.4.0 resmî portal bağlantısı olup otomatik değer yoksa manual-only yolu tanınır', () => {
+test('v3.5.0 resmî portal bağlantısı olup otomatik değer yoksa manual-only yolu tanınır', () => {
   assert.equal(shouldUseManualOnlyStatus({ actions: [{ url: 'https://belediye.gov.tr/imar', kind: 'municipality-portal', accessMode: 'public-portal' }] }), true);
   assert.equal(shouldUseManualOnlyStatus({ actions: [{ url: 'https://belediye.gov.tr/wfs', kind: 'municipality-geodata', accessMode: 'open-data' }] }), false);
 });
@@ -122,9 +122,10 @@ test('mobil arayüzde gerçek yeniden tarama ve Plan AI sınırlı-mod akışı 
   assert.match(app, /Sınırlı açıklama modu/);
   assert.match(app, /'manual-only': 'Resmî sayfada açılmalı'/);
   assert.match(app, /attempts\.every\(\(item\) => item\?\.status === 'manual-only'\)/);
-  assert.match(app, /result\.notice \|\| result\.errorCode/);
+  assert.match(app, /result\.notice \|\| 'Mevcut doğrulanmış sonuç özetlendi'/);
+  assert.doesNotMatch(app, /result\.notice\s*\|\|\s*result\.errorCode/);
   assert.match(app, /Sınırlı mod ·/);
   assert.match(app, /state\.analysisAbort !== controller/);
   assert.match(styles, /source-scan-actions/);
-  assert.match(index, /v3\.4\.0/);
+  assert.match(index, /v3\.5\.0/);
 });

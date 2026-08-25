@@ -1,6 +1,12 @@
 import { readFile, writeFile, readdir, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+const currentBuildPackage = JSON.parse(await readFile('package.json', 'utf8'));
+if (currentBuildPackage.version === '3.5.0') {
+  console.log('Planlamasyon v3.5.0 kaynakları güncel; eski yükseltme adımları atlandı.');
+  process.exit(0);
+}
+
 async function replaceRequired(file, replacements) {
   let text = await readFile(file, 'utf8');
   for (const [from, to] of replacements) {
@@ -68,7 +74,7 @@ await replaceRequired('dist/app.js', [
 const v340Css = await readFile('dist/styles.css', 'utf8');
 await writeFile('dist/styles.css', `${v340Css}
 
-/* v3.4.0 kadastro/imar ayrımı, mobil karar özeti ve harita yedeği */
+/* v3.5.0 kadastro/imar ayrımı, mobil karar özeti ve harita yedeği */
 .record-badge-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .rights-warning-badge{padding:7px 10px;border-radius:999px;border:1px solid rgba(239,182,93,.35);background:rgba(239,182,93,.08);color:var(--amber);font-size:11px;font-weight:800}
 .mobile-result-summary{display:none;margin-bottom:14px;padding:18px}
@@ -1161,7 +1167,7 @@ async function fetchOfficialDocument(inputUrl) {`
 await replaceRequired('dist/app.js', [
   [
     '<div><span class="section-kicker">Belge okuma motoru · v3.2.0</span><h4 id="documentReaderTitle">Resmî belgeyi otomatik tara</h4></div>',
-    '<div><span class="section-kicker">Belge okuma motoru · v3.4.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>'
+    '<div><span class="section-kicker">Belge okuma motoru · v3.5.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>'
   ],
   [
     `        <label class="drawer-check document-parcel-confirm" id="documentParcelConfirmWrap" hidden><input type="checkbox" id="documentParcelConfirm"><span>Belgede ada/parsel metni otomatik okunamadı; bu belgenin sorguladığım parsele ait olduğunu resmî belgeden kontrol ettim.</span></label>
@@ -1364,7 +1370,7 @@ test('v3.3.0 sürümü ve önbellek anahtarları tek sürümdür', async () => {
 
 console.log('Planlamasyon v3.3.0 ulusal resmî kaynak yönlendirmesi uygulandı.');
 
-// v3.4.0 — izinli belge okuma, kadastro/imar ayrımı, hızlı ilk faz ve harita yedeği.
+// v3.5.0 — izinli belge okuma, kadastro/imar ayrımı, hızlı ilk faz ve harita yedeği.
 await replaceRequired('dist/index.html', [
   [
     '            <div class="map-unavailable" id="mapUnavailable" hidden><strong>Harita yüklenemedi</strong><span>İnternet bağlantısını kontrol edip sayfayı yenileyin.</span></div>',
@@ -1511,7 +1517,7 @@ await replaceRequired('netlify/functions/lib/zoning-client.mjs', [
 
 function unavailablePlanAi(env, message) {`
   ],
-  ["configuration.boundedAnalysisVersion = '3.3.0';", "configuration.boundedAnalysisVersion = '3.4.0';"]
+  ["configuration.boundedAnalysisVersion = '3.3.0';", "configuration.boundedAnalysisVersion = '3.5.0';"]
 ]);
 
 await replaceRequired('netlify/functions/lib/municipality-provider.mjs', [
@@ -1561,13 +1567,13 @@ for (const file of [
   text = text
     .replaceAll('v3\\.3\\.0', 'v3\\.4\\.0')
     .replaceAll('3\\.3\\.0', '3\\.4\\.0')
-    .replaceAll('v3.3.0', 'v3.4.0')
-    .replaceAll('3.3.0', '3.4.0');
+    .replaceAll('v3.3.0', 'v3.5.0')
+    .replaceAll('3.3.0', '3.5.0');
   await writeFile(file, text);
 }
 
 const packageJson340 = JSON.parse(await readFile('package.json', 'utf8'));
-packageJson340.version = '3.4.0';
+packageJson340.version = '3.5.0';
 const checkCommands340 = String(packageJson340.scripts.check || '')
   .split(' && ')
   .map((command) => command.trim())
@@ -1592,4 +1598,4 @@ const wrangler340 = (await readFile('wrangler.toml', 'utf8'))
   );
 await writeFile('wrangler.toml', wrangler340);
 
-console.log('Planlamasyon v3.4.0 güvenli belge okuma ve hızlı karar sürümü uygulandı.');
+console.log('Planlamasyon v3.5.0 güvenli belge okuma ve hızlı karar sürümü uygulandı.');

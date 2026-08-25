@@ -1,6 +1,6 @@
-# Planlamasyon v3.4.0 — Hızlı ve İzinli Parsel Karar Akışı
+# Planlamasyon v3.5.0 — Hızlı ve İzinli Parsel Karar Akışı
 
-## v3.4.0 yenilikleri
+## v3.5.0 yenilikleri
 
 - TKGM taşınmaz niteliği ile imar planı/yeni yapı hakkı ekranda iki ayrı kayıt olarak gösterilir. Kadastro kartında sürekli görünen “İmar hakkı değildir” uyarısı bulunur.
 - Mobil sonuç ekranına parsel, tapu/kadastro kaydı ve imar doğrulama durumunu tek bakışta veren hızlı karar özeti eklendi. Doğrulanmış hesap yoksa dört boş “Doğrulanamadı” kartı gizlenir.

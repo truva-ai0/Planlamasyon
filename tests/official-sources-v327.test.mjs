@@ -313,7 +313,7 @@ test('Yençok kat değeri floors olur, metre Hmax ile karışmaz ve yapinizami e
     ].join('\n'),
     query: fictionalQuery
   });
-  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.7.0');
+  assert.equal(ZONING_DOCUMENT_PARSER_VERSION, '3.8.0');
   assert.equal(parsed.fields.floors, 25);
   assert.equal(parsed.fields.hmax, undefined);
   assert.equal(parsed.fields.buildingOrder, 'Ayrık');
@@ -379,7 +379,7 @@ test('açık kaynak etiket normalizasyonu yapinizami ve Yençok kat ayrımını 
     yapinizami: 'Ayrık Nizam',
     yencok: '25 kat'
   });
-  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.7.0');
+  assert.equal(OPEN_OFFICIAL_SOURCE_VERSION, '3.8.0');
   assert.equal(fields.buildingOrder, 'Ayrık');
   assert.equal(fields.floors, 25);
   assert.equal(fields.hmax, null);

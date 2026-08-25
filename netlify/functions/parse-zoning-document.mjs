@@ -1,38 +1,65 @@
 import { extractText, getDocumentProxy } from 'unpdf';
 import { parseZoningDocumentText, ZONING_DOCUMENT_PARSER_VERSION } from './lib/zoning-document-parser.mjs';
 import { parseBesiktasKeosImarHtml, BESIKTAS_KEOS_IMAR_PARSER_VERSION } from './lib/besiktas-keos-imar-parser.mjs';
-import { enforceSimpleRateLimit, jsonResponse, parseJsonBody, requestIp, safeErrorResponse, httpError } from './lib/http.mjs';
+import { enforceSimpleRateLimit, jsonResponse, normalizeHeaders, parseJsonBody, requestIp, safeErrorResponse, httpError } from './lib/http.mjs';
+import { fetchOfficialResource, readResponseBytesLimited, validatePublicHttpsUrl } from './lib/official-source-security.mjs';
+import { runtimeEnv } from './lib/runtime-env.mjs';
 
 const LIMITS = globalThis.__PLANLAMASYON_DOCUMENT_PARSE_LIMITS__ || new Map();
 globalThis.__PLANLAMASYON_DOCUMENT_PARSE_LIMITS__ = LIMITS;
 
 const MAX_REMOTE_BYTES = 10 * 1024 * 1024;
 const MAX_PDF_PAGES = 80;
+const MAX_JSON_BODY_BYTES = 1_900_000;
+const ALLOWED_TEXT_MIME_TYPES = new Set([
+  'text/plain', 'text/html', 'text/csv', 'application/json', 'application/xml', 'text/xml',
+  'application/xhtml+xml', 'application/gml+xml', 'application/pdf', 'image/png', 'image/jpeg', 'image/jpg'
+]);
+const SENSITIVE_QUERY_KEY = /^(?:access[-_.]?token|id[-_.]?token|refresh[-_.]?token|login[-_.]?token|token|bearer|auth(?:orization)?|auth[-_.]?key|session(?:id)?|sid|phpsessid|jsessionid|code|ticket|sso|jwt|signature|sig|secret|client[-_.]?secret|api[-_.]?key|credential|key[-_.]?pair[-_.]?id|policy|expires|password|passwd|pwd|samlresponse|relaystate|oauth[-_.]?.*|state|nonce|tckn|tc[-_.]?(?:kimlik|kimlikno)|identity|email|phone|username)$/i;
 
-export async function handler(event) {
+export async function handler(event, context = {}) {
   if ((event.httpMethod || 'GET') !== 'POST') return jsonResponse(405, { ok: false, code: 'METHOD_NOT_ALLOWED', message: 'Yalnızca POST destekleniyor.' }, { Allow: 'POST' });
   try {
+    const headers = normalizeHeaders(event.headers || {});
+    const contentType = String(headers['content-type'] || '').toLowerCase();
+    if (contentType && !contentType.includes('application/json')) {
+      throw httpError('İstek JSON biçiminde gönderilmelidir.', 415, 'UNSUPPORTED_MEDIA_TYPE');
+    }
     enforceSimpleRateLimit(LIMITS, requestIp(event), 12, 60_000);
-    const body = parseJsonBody(event, 600_000);
+    const body = parseJsonBody(event, MAX_JSON_BODY_BYTES);
+    const env = runtimeEnv(context);
     const mode = String(body.mode || (body.sourceUrl ? 'url' : 'text')).toLowerCase();
     const query = sanitizeObject(body.query, 20, 220);
     const parcel = sanitizeParcel(body.parcel);
     let text = '';
+    const receivedAt = new Date().toISOString();
     let metadata = {
       sourceTitle: clean(body.sourceTitle, 280),
       authority: clean(body.authority, 240),
-      sourceUrl: safeHttps(body.sourceUrl),
+      sourceUrl: sanitizeDocumentUrl(body.sourceUrl, env, { forFetch: mode === 'url' }),
       fileName: clean(body.fileName, 260),
-      mimeType: clean(body.mimeType, 120),
+      mimeType: sanitizeDeclaredMimeType(body.mimeType),
       documentDate: clean(body.documentDate, 80),
-      retrievedAt: clean(body.retrievedAt, 80)
+      retrievedAt: receivedAt,
+      sourceLastModified: null,
+      evidenceOrigin: sanitizeEvidenceOrigin(body.evidenceOrigin),
+      userConfirmedOfficialSource: body.userConfirmedOfficialSource === true,
+      sourceVerification: body.userConfirmedOfficialSource === true ? 'user-confirmed-source' : 'unconfirmed-user-source'
     };
 
     if (mode === 'url') {
       if (!metadata.sourceUrl) throw httpError('Geçerli bir HTTPS resmî belge bağlantısı gerekli.', 400, 'DOCUMENT_URL_REQUIRED');
-      const remote = await fetchOfficialDocument(metadata.sourceUrl);
+      const remote = await fetchOfficialDocument(metadata.sourceUrl, {
+        env,
+        fetchImpl: context?.fetchImpl || globalThis.fetch
+      });
       text = remote.text;
-      metadata = { ...metadata, ...remote.metadata, sourceUrl: remote.metadata.finalUrl || metadata.sourceUrl };
+      metadata = {
+        ...metadata,
+        ...remote.metadata,
+        sourceUrl: remote.metadata.finalUrl || metadata.sourceUrl,
+        sourceVerification: 'official-host-retrieved'
+      };
     } else if (mode === 'text') {
       text = String(body.text || '');
       if (!text.trim()) throw httpError('Okunacak belge metni gerekli.', 400, 'DOCUMENT_TEXT_REQUIRED');
@@ -55,8 +82,11 @@ export async function handler(event) {
           pageCount: metadata.pageCount || null,
           parserVersion: ZONING_DOCUMENT_PARSER_VERSION,
           documentDate: parsed.evidence?.documentDate || metadata.documentDate || null,
+          sourceLastModified: parsed.evidence?.sourceLastModified || metadata.sourceLastModified || null,
           retrievedAt: parsed.evidence?.retrievedAt || metadata.retrievedAt || null,
-          characterCount: text.length
+          characterCount: text.length,
+          sourceVerification: parsed.evidence?.sourceVerification || metadata.sourceVerification,
+          inputIntegrity: mode === 'text' ? 'extracted-text-only' : 'server-retrieved-bytes'
         }
       }
     });
@@ -107,7 +137,10 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
         sourceUrl: null,
         parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
         documentType: 'zoning-status-document',
+        documentHashKind: 'extracted-text-sha256',
         parcelMatchStatus: parsed.parcelMatch?.status || 'unverified',
+        sourceVerification: metadata.sourceVerification || 'user-confirmed-source',
+        evidenceOrigin: metadata.evidenceOrigin || 'user-upload',
         fieldEvidence: {},
         allowances: {}
       },
@@ -121,15 +154,23 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
   const fields = parsed.fields || {};
   const fieldEvidence = Object.fromEntries(Object.entries(parsed.fieldEvidence || {}).map(([key, item]) => [key, {
     label: item.label || key,
+    value: item.value ?? fields[key] ?? null,
+    unit: documentFieldUnit(key),
     confidence: item.confidence || 'high',
     excerpt: `${item.label || key}: ${item.rawValue ?? item.value ?? ''}`,
     method: item.method || 'besiktas-keos-result-row',
     sourceTitle: parsed.source?.title || metadata.sourceTitle || 'Beşiktaş Belediyesi İmar Durumu',
+    sourceAuthority: 'Beşiktaş Belediyesi',
     sourceUrl: parsed.source?.url || metadata.sourceUrl || null,
     documentDate: fields.planDate || metadata.documentDate || null,
+    sourceLastModified: metadata.sourceLastModified || null,
     retrievedAt: metadata.retrievedAt || new Date().toISOString(),
     parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
-    parcelMatchStatus: 'exact'
+    documentHash: generic.documentHash || null,
+    documentHashKind: generic.evidence?.documentHashKind || 'extracted-text-sha256',
+    parcelMatchStatus: 'exact',
+    sourceVerification: metadata.sourceVerification || 'user-confirmed-source',
+    evidenceOrigin: metadata.evidenceOrigin || 'user-upload'
   }]));
   const core = ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'];
   const populated = core.filter((key) => fields[key] != null);
@@ -168,11 +209,15 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
       rearSetback: fields.rearSetback,
       parserVersion: BESIKTAS_KEOS_IMAR_PARSER_VERSION,
       documentType: 'zoning-status-document',
+      documentHashKind: generic.evidence?.documentHashKind || 'extracted-text-sha256',
       documentDate: fields.planDate || generic.evidence?.documentDate || metadata.documentDate || null,
+      sourceLastModified: generic.evidence?.sourceLastModified || metadata.sourceLastModified || null,
       retrievedAt: metadata.retrievedAt || generic.evidence?.retrievedAt || null,
       extractionConfidence: parsed.record.extractionConfidence || 'high',
       parcelMatchStatus: 'exact',
       detectedParcels: [parsed.detectedParcel],
+      sourceVerification: metadata.sourceVerification || 'user-confirmed-source',
+      evidenceOrigin: metadata.evidenceOrigin || 'user-upload',
       fieldEvidence
     },
     completeness: {
@@ -187,36 +232,50 @@ function parseUserProvidedBesiktasHtml({ text, query, parcel, metadata, body, mo
   };
 }
 
-async function fetchOfficialDocument(inputUrl) {
-  const initialUrl = allowedPublicUrl(inputUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+async function fetchOfficialDocument(inputUrl, { env = {}, fetchImpl = globalThis.fetch } = {}) {
+  const initialUrl = sanitizeDocumentUrl(inputUrl, env, { forFetch: true });
   try {
-    const response = await fetch(initialUrl, {
-      redirect: 'follow',
+    const startHost = new URL(initialUrl).hostname;
+    const allowedRedirectHosts = [
+      String(env.OFFICIAL_DOCUMENT_ALLOWED_HOSTS || ''),
+      startHost,
+      /^www\.[^.]+\.(?:bel|gov)\.tr$/i.test(startHost) ? startHost.slice(4) : ''
+    ].filter(Boolean).join(',');
+    const response = await fetchOfficialResource(initialUrl, {
+      method: 'GET',
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.3',
-        'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
-      },
-      signal: controller.signal
+        'User-Agent': 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com; public-document-reader)'
+      }
+    }, {
+      fetchImpl,
+      timeoutMs: 15_000,
+      retryCount: 1,
+      maxRedirects: 3,
+      allowCrossOriginRedirects: true,
+      allowedRedirectHosts,
+      maxResponseBytes: MAX_REMOTE_BYTES,
+      validateUrl: (value) => sanitizeDocumentUrl(value, env, { forFetch: true })
     });
-    const finalUrl = allowedPublicUrl(response.url || initialUrl);
+    const finalUrl = sanitizeDocumentUrl(response.officialFinalUrl || response.url || initialUrl, env, { forFetch: true });
     if (!response.ok) throw httpError(`Resmî belge sunucusu ${response.status} yanıtı verdi.`, response.status === 404 ? 404 : 502, 'DOCUMENT_FETCH_FAILED');
-    const declaredLength = Number(response.headers.get('content-length'));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_REMOTE_BYTES) throw httpError('Belge 10 MB sınırını aşıyor.', 413, 'DOCUMENT_TOO_LARGE');
-    const buffer = new Uint8Array(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_REMOTE_BYTES) throw httpError('Belge 10 MB sınırını aşıyor.', 413, 'DOCUMENT_TOO_LARGE');
+    const buffer = await readResponseBytesLimited(response, MAX_REMOTE_BYTES);
     const mimeType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     const fileName = fileNameFromResponse(response, finalUrl);
     let text;
     let pageCount = null;
-    if (mimeType === 'application/pdf' || looksLikePdf(buffer, fileName)) {
+    const pdfDeclared = mimeType === 'application/pdf' || /\.pdf$/i.test(fileName || '');
+    if (looksLikePdf(buffer)) {
       const result = await extractPdfText(buffer);
       text = result.text;
       pageCount = result.pageCount;
-    } else if (isTextLike(mimeType, fileName)) {
+    } else if (pdfDeclared) {
+      throw httpError('Bağlantı PDF olarak bildirildi ancak dosya imzası geçerli değil.', 415, 'DOCUMENT_MIME_MISMATCH');
+    } else if (isTextLike(mimeType, fileName) && looksLikeText(buffer)) {
       text = decodeText(buffer);
       if (/html|xhtml/i.test(mimeType) || /\.html?$/i.test(fileName || '')) text = htmlToText(text);
+    } else if (isTextLike(mimeType, fileName)) {
+      throw httpError('Belge metin olarak bildirildi ancak içerik güvenli metin denetiminden geçmedi.', 415, 'DOCUMENT_MIME_MISMATCH');
     } else {
       throw httpError(`Bu bağlantıdaki ${mimeType || 'dosya türü'} otomatik okunamıyor. PDF, HTML, JSON, XML veya metin kullanın.`, 415, 'DOCUMENT_TYPE_UNSUPPORTED');
     }
@@ -228,16 +287,14 @@ async function fetchOfficialDocument(inputUrl) {
         fileName,
         mimeType: mimeType || inferMime(fileName),
         pageCount,
-        documentDate: response.headers.get('last-modified') || null,
+        documentDate: null,
+        sourceLastModified: normalizeHttpTimestamp(response.headers.get('last-modified')),
         retrievedAt: new Date().toISOString(),
         sourceTitle: fileName ? fileName.replace(/\.[^.]+$/, '') : null
       }
     };
   } catch (error) {
-    if (error?.name === 'AbortError') throw httpError('Belge bağlantısı zaman aşımına uğradı.', 504, 'DOCUMENT_FETCH_TIMEOUT');
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    throw mapOfficialDocumentFetchError(error);
   }
 }
 
@@ -261,26 +318,56 @@ async function extractPdfText(buffer) {
   }
 }
 
-function allowedPublicUrl(value) {
-  let url;
-  try { url = new URL(String(value)); } catch { throw httpError('Belge bağlantısı geçersiz.', 400, 'DOCUMENT_URL_INVALID'); }
-  if (url.protocol !== 'https:') throw httpError('Belge bağlantısı HTTPS olmalıdır.', 400, 'DOCUMENT_URL_HTTPS_REQUIRED');
-  if (url.hostname.toLowerCase() === 'keos.besiktas.bel.tr' && url.pathname.toLowerCase().startsWith('/imardurumu')) {
+function sanitizeDocumentUrl(value, env = {}, { forFetch = false } = {}) {
+  if (!value) return null;
+  let validated;
+  try {
+    validated = validatePublicHttpsUrl(value, {
+      requireOfficialHost: true,
+      allowedHosts: env.OFFICIAL_DOCUMENT_ALLOWED_HOSTS || ''
+    });
+  } catch (error) {
+    throw mapDocumentUrlError(error);
+  }
+  const url = new URL(validated);
+  for (const key of url.searchParams.keys()) {
+    if (isSensitiveQueryKey(key)) {
+      throw httpError('Oturum, kimlik doğrulama veya imza bilgisi içeren belge bağlantısı kabul edilmez.', 400, 'DOCUMENT_URL_SENSITIVE_QUERY');
+    }
+  }
+  const host = url.hostname.toLowerCase();
+  if (forFetch && (host === 'turkiye.gov.tr' || host.endsWith('.turkiye.gov.tr'))) {
+    throw httpError('e-Devlet oturum ve hizmet sayfaları otomatik okunmaz. Belgeyi e-Devlet üzerinden kendiniz indirip Dosya sekmesinden ekleyin.', 403, 'EDEVLET_AUTOMATIC_READ_FORBIDDEN');
+  }
+  if (forFetch && ['os.besiktas.bel.tr', 'keos.besiktas.bel.tr'].includes(host)) {
     throw httpError('Beşiktaş Belediyesi kullanım koşulları otomatik üçüncü taraf işlemini yasaklıyor. Sonucu belediye sitesinden açıp güncel belgeyi Dosya sekmesinden yükleyin.', 403, 'BESIKTAS_AUTOMATIC_READ_FORBIDDEN');
   }
-  if (isPrivateHost(url.hostname)) throw httpError('Özel ağ adresinden belge alınamaz.', 400, 'DOCUMENT_URL_PRIVATE_HOST');
-  if (url.username || url.password) throw httpError('Kullanıcı bilgisi içeren URL kabul edilmez.', 400, 'DOCUMENT_URL_CREDENTIALS');
+  if (forFetch && host === 'kentrehberi.sisli.bel.tr' && url.pathname.toLowerCase().startsWith('/imardurum')) {
+    throw httpError('Şişli Belediyesi imar portalı kullanım koşulları nedeniyle otomatik okunmaz. Sonucu resmî portalda açıp güncel belgeyi Dosya sekmesinden yükleyin.', 403, 'SISLI_AUTOMATIC_READ_FORBIDDEN');
+  }
   return url.toString();
 }
 
-function isPrivateHost(hostname) {
-  const host = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) return true;
-  const match = host.match(/^172\.(\d+)\./);
-  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return true;
-  if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return true;
-  return false;
+function mapDocumentUrlError(error) {
+  const code = String(error?.code || 'DOCUMENT_URL_INVALID');
+  const status = code === 'SOURCE_HOST_NOT_ALLOWED' ? 403 : 400;
+  const message = code === 'SOURCE_HOST_NOT_ALLOWED'
+    ? 'Otomatik belge bağlantısı yalnız resmî .gov.tr/.bel.tr alan adından veya yapılandırılmış izin listesinden alınabilir.'
+    : 'Belge bağlantısı kullanıcı bilgisi, özel port veya yerel/özel ağ hedefi içermeyen standart bir HTTPS adresi olmalıdır.';
+  return httpError(message, status, code);
+}
+
+function mapOfficialDocumentFetchError(error) {
+  if (error?.statusCode) return error;
+  const code = String(error?.code || 'DOCUMENT_FETCH_FAILED');
+  if (error?.name === 'AbortError' || code === 'OFFICIAL_FETCH_TIMEOUT') {
+    return httpError('Belge bağlantısı zaman aşımına uğradı.', 504, 'DOCUMENT_FETCH_TIMEOUT');
+  }
+  if (code === 'SOURCE_RESPONSE_TOO_LARGE') return httpError('Belge 10 MB sınırını aşıyor.', 413, 'DOCUMENT_TOO_LARGE');
+  if (['UNSAFE_SOURCE_URL', 'BLOCKED_NETWORK_TARGET', 'SOURCE_HOST_NOT_ALLOWED', 'CROSS_ORIGIN_REDIRECT_BLOCKED', 'REDIRECT_LIMIT_EXCEEDED', 'INVALID_REDIRECT'].includes(code)) {
+    return mapDocumentUrlError(error);
+  }
+  return httpError('Resmî belge sunucusuna güvenli bağlantı kurulamadı.', 502, 'DOCUMENT_FETCH_FAILED');
 }
 
 function fileNameFromResponse(response, url) {
@@ -291,9 +378,19 @@ function fileNameFromResponse(response, url) {
   if (candidate) return clean(candidate, 260);
   try { return clean(decodeURIComponent(new URL(url).pathname.split('/').pop() || ''), 260) || null; } catch { return null; }
 }
-function looksLikePdf(buffer, fileName) { return (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) || /\.pdf$/i.test(fileName || ''); }
+function looksLikePdf(buffer) { return buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46 && buffer[4] === 0x2d; }
 function isTextLike(mime, fileName) { return /^(text\/|application\/(json|xml|xhtml\+xml))/.test(mime) || /\.(txt|html?|json|xml|gml|csv)$/i.test(fileName || ''); }
 function inferMime(fileName) { if (/\.pdf$/i.test(fileName || '')) return 'application/pdf'; if (/\.html?$/i.test(fileName || '')) return 'text/html'; if (/\.json$/i.test(fileName || '')) return 'application/json'; if (/\.xml$/i.test(fileName || '')) return 'application/xml'; return 'text/plain'; }
+function looksLikeText(buffer) {
+  if (!buffer?.byteLength) return false;
+  const sample = buffer.subarray(0, Math.min(buffer.byteLength, 8192));
+  let controls = 0;
+  for (const byte of sample) {
+    if (byte === 0) return false;
+    if (byte < 0x09 || (byte > 0x0d && byte < 0x20)) controls += 1;
+  }
+  return controls / sample.byteLength < 0.02;
+}
 function decodeText(buffer) { return new TextDecoder('utf-8', { fatal: false }).decode(buffer); }
 function htmlToText(html) {
   return decodeEntities(String(html)
@@ -319,5 +416,30 @@ function decodeEntities(value) {
 }
 function sanitizeParcel(parcel) { if (!parcel || parcel.type !== 'Feature') return null; const json = JSON.stringify(parcel); return json.length <= 1_000_000 ? JSON.parse(json) : null; }
 function sanitizeObject(input, maxItems, maxLength) { const out = {}; for (const [key, value] of Object.entries(input || {}).slice(0, maxItems)) { const k = clean(key, 60); const v = clean(value, maxLength); if (k && v != null) out[k] = v; } return out; }
-function safeHttps(value) { if (!value) return null; try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; } }
+function sanitizeDeclaredMimeType(value) {
+  const mime = clean(value, 120)?.toLowerCase().split(';')[0].trim() || null;
+  if (!mime) return null;
+  if (!ALLOWED_TEXT_MIME_TYPES.has(mime)) throw httpError('Bu belge türü desteklenmiyor. PDF, PNG, JPG, HTML, JSON, XML veya metin kullanın.', 415, 'DOCUMENT_TYPE_UNSUPPORTED');
+  return mime;
+}
+function sanitizeEvidenceOrigin(value) {
+  const origin = String(value || '').toLowerCase().trim();
+  return ['user-upload', 'user-paste', 'automatic-url'].includes(origin) ? origin : 'unspecified-user-input';
+}
+function isSensitiveQueryKey(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return SENSITIVE_QUERY_KEY.test(key) || key.startsWith('x-amz-') || key.startsWith('x-goog-');
+}
+function documentFieldUnit(key) {
+  if (['netParcelArea', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'].includes(key)) return 'm2';
+  if (['frontSetback', 'sideSetback', 'rearSetback', 'hmax'].includes(key)) return 'm';
+  if (['taks', 'emsal'].includes(key)) return 'ratio';
+  if (key === 'floors') return 'kat';
+  return null;
+}
+function normalizeHttpTimestamp(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 function clean(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }

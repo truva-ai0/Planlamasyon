@@ -8,6 +8,7 @@ const STORE_KEYS = {
   evidence: 'planlamasyon-evidence-v3-1',
   profile: 'planlamasyon-profile-v3-1',
   recovery: 'planlamasyon-recovery-v3-7',
+  queryContext: 'planlamasyon-query-context-v3-8',
   legacySession: 'planlamasyon-identity-session-v3-1'
 };
 
@@ -31,6 +32,7 @@ const elements = {
   profileInitials: $('#profileInitials'), profileSvg: $('#profileSvg'), profileMenuUser: $('#profileMenuUser'),
   profileMenuName: $('#profileMenuName'), profileMenuEmail: $('#profileMenuEmail'), profileAuthButton: $('#profileAuthButton'),
   parcelSection: $('#parcelSection'), connectionBanner: $('#connectionBanner'),
+  queryRestoreBanner: $('#queryRestoreBanner'), queryRestoreText: $('#queryRestoreText'), queryRestoreButton: $('#queryRestoreButton'),
   worksCount: $('#worksCount'), favoritesCount: $('#favoritesCount'), requestsCount: $('#requestsCount'),
   parcelForm: $('#parcelForm'), province: $('#provinceSelect'), district: $('#districtSelect'), neighbourhood: $('#neighbourhoodSelect'),
   block: $('#blockInput'), parcel: $('#parcelInput'), submit: $('#parcelSubmit'), resetMap: $('#resetMapButton'),
@@ -41,14 +43,14 @@ const elements = {
   parcelAddress: $('#parcelAddress'), plainExplanation: $('#plainExplanation'), metricArea: $('#metricArea'),
   mobileResultSummary: $('#mobileResultSummary'), mobileSummaryParcel: $('#mobileSummaryParcel'), mobileSummaryCadastre: $('#mobileSummaryCadastre'), mobileSummaryZoning: $('#mobileSummaryZoning'),
   cadastreStatusChip: $('#cadastreStatusChip'), zoningStatusChip: $('#zoningStatusChip'), aiStatusChip: $('#aiStatusChip'), summaryGrid: $('#summaryGrid'),
-  metricQuality: $('#metricQuality'), metricMapSheet: $('#metricMapSheet'), metricBlockParcel: $('#metricBlockParcel'),
+  metricQuality: $('#metricQuality'), metricMapSheet: $('#metricMapSheet'), metricBlockParcel: $('#metricBlockParcel'), copyParcelReferenceButton: $('#copyParcelReferenceButton'),
   zoningOverviewTitle: $('#zoningOverviewTitle'), zoningOverviewText: $('#zoningOverviewText'), zoningMiniList: $('#zoningMiniList'),
   summaryFloors: $('#summaryFloors'), summaryFootprint: $('#summaryFootprint'), summaryConstruction: $('#summaryConstruction'), summaryOutside: $('#summaryOutside'),
   possibilityGrid: $('#possibilityGrid'), warningList: $('#warningList'), zoningCompletionCard: $('#zoningCompletionCard'),
   addEvidenceButton: $('#addEvidenceButton'), requestAnalysisButton: $('#requestAnalysisButton'), technicalList: $('#technicalList'),
   environmentBadge: $('#environmentBadge'), environmentIntro: $('#environmentIntro'), environmentGrid: $('#environmentGrid'),
   officialServicesCard: $('#officialServicesCard'), officialServicesBadge: $('#officialServicesBadge'), officialServicesIntro: $('#officialServicesIntro'),
-  officialServicesGrid: $('#officialServicesGrid'), primaryOfficialServiceLink: $('#primaryOfficialServiceLink'),
+  officialServicesGrid: $('#officialServicesGrid'), primaryOfficialServiceLink: $('#primaryOfficialServiceLink'), municipalityAccessSummary: $('#municipalityAccessSummary'),
   planRecordsCard: $('#planRecordsCard'), planRecordsBadge: $('#planRecordsBadge'), planRecordsIntro: $('#planRecordsIntro'), planRecordsGrid: $('#planRecordsGrid'),
   sourceScanCard: $('#sourceScanCard'), sourceScanBadge: $('#sourceScanBadge'), sourceScanIntro: $('#sourceScanIntro'), sourceScanGrid: $('#sourceScanGrid'), retrySourceScanButton: $('#retrySourceScanButton'),
   planAiCard: $('#planAiCard'), planAiBadge: $('#planAiBadge'), planAiIntro: $('#planAiIntro'), planAiEvidence: $('#planAiEvidence'), planAiAskButton: $('#planAiAskButton'),
@@ -92,6 +94,7 @@ async function boot() {
   const status = await apiTkgm('status');
   if (!status.enabled) throw new Error('TKGM bilgi bağlantısı bu kurulumda kapalı.');
   await loadProvinces();
+  renderQueryRestoreBanner();
   setConnection('ok', 'Parsel sorgusu bilgi amaçlı hazır', 'Kadastro bağlantısı bilgi amaçlıdır; ticari/kurumsal veri kullanımı için TAKPAS ve ilgili kurum yetkileri gerekir.');
 }
 
@@ -313,6 +316,7 @@ async function onParcelSubmit(event) {
       province: selectedName(elements.province), district: selectedName(elements.district), neighbourhood: neighbourhood.name,
       neighbourhoodId: neighbourhood.id, block, parcel
     };
+    saveQueryContext();
     await renderParcelAndAnalyze(feature, { scroll: true });
   } catch (error) {
     showToast(readableError(error));
@@ -863,6 +867,8 @@ function dedupeDisplayItems(items = []) {
 function renderOfficialServices(discovery = {}) {
   const actions = dedupeDisplayItems(Array.isArray(discovery.actions) ? discovery.actions : []);
   const catalog = discovery.catalog || {};
+  const registry = discovery.municipalityRegistry || {};
+  const selectedAuthority = registry.selectedAuthority || null;
   const statusLabels = {
     'automatic-adapter-configured': 'Otomatik bağlantı hazır',
     'official-service-found': catalog.matchCount ? 'Katalog eşleşmesi bulundu' : 'Resmî hizmet bulundu',
@@ -876,8 +882,11 @@ function renderOfficialServices(discovery = {}) {
   else elements.officialServicesBadge.classList.add('is-warn');
   elements.officialServicesBadge.textContent = statusLabels[discovery.status] || 'Resmî kaynaklar';
 
-  const catalogText = catalog.embedded
-    ? `Türkiye geneli dinamik resmî yönlendirme hazır · bu konum için ${formatNumber(catalog.matchCount || 0)} doğrulanmış doğrudan hizmet eşleşti.`
+  renderMunicipalityAccessSummary(registry);
+  const catalogText = registry.embedded
+    ? `1.407 belediyelik resmî envanter hazır · bu konum için ${formatNumber(registry.matchedCount || 0)} yetkili idare adayı eşleşti${selectedAuthority ? `; öncelikli kayıt ${selectedAuthority.authority}` : ''}.`
+    : catalog.embedded
+      ? `Türkiye geneli dinamik resmî yönlendirme hazır · bu konum için ${formatNumber(catalog.matchCount || 0)} doğrulanmış doğrudan hizmet eşleşti.`
     : 'Türkiye geneli resmî yönlendirme hazır.';
   elements.officialServicesIntro.textContent = [catalogText, discovery.message || 'Türkiye geneli e-Plan, TUCBS ve ilgili belediyenin resmî imar hizmeti listelenir.'].filter(Boolean).join(' ');
 
@@ -888,7 +897,10 @@ function renderOfficialServices(discovery = {}) {
     || actions.find((action) => action.kind === 'national-portal')
     || actions[0];
   if (primary?.url) {
-    elements.primaryOfficialServiceLink.href = primary.url;
+    const primaryUrl = safeStoredUrl(primary.url);
+    elements.primaryOfficialServiceLink.href = primaryUrl || 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html';
+    elements.primaryOfficialServiceLink.dataset.actionId = cleanStoreText(primary.id, 160);
+    elements.primaryOfficialServiceLink.dataset.accessMode = cleanStoreText(primary.accessMode, 80);
     const isSearch = primary.accessMode === 'official-search';
     const isMunicipal = ['municipality-portal', 'municipality-geodata'].includes(primary.kind);
     elements.primaryOfficialServiceLink.textContent = isSearch
@@ -896,6 +908,8 @@ function renderOfficialServices(discovery = {}) {
       : `${isMunicipal ? 'Yetkili İmar Sorgusunu' : 'Resmî İmar Kaynağını'} Aç ↗`;
   } else {
     elements.primaryOfficialServiceLink.href = 'https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html';
+    elements.primaryOfficialServiceLink.dataset.actionId = 'eplan-national';
+    elements.primaryOfficialServiceLink.dataset.accessMode = 'public-portal';
     elements.primaryOfficialServiceLink.textContent = 'e-Plan’da Kontrol Et ↗';
   }
 
@@ -915,6 +929,7 @@ function renderOfficialServices(discovery = {}) {
   elements.officialServicesGrid.innerHTML = visibleActions.map((action) => {
     const catalogueLabel = action.catalogRecordId ? ' · Gömülü katalog' : '';
     const verification = action.verifiedAt ? ` · ${action.verifiedAt}` : '';
+    const actionUrl = safeStoredUrl(action.url);
     return `
     <article class="official-service-item ${action.kind === 'configured-adapter' ? 'is-configured' : ''} ${action.catalogRecordId ? 'is-catalog' : ''}">
       <span class="official-service-icon">${escapeHtml(icons[action.kind] || 'K')}</span>
@@ -924,9 +939,25 @@ function renderOfficialServices(discovery = {}) {
         ${action.note ? `<small class="official-service-note">${escapeHtml(action.note)}</small>` : ''}
         <em class="official-service-status">${escapeHtml(accessLabels[action.accessMode] || action.status || 'Kontrol')}${escapeHtml(catalogueLabel)}${escapeHtml(verification)}</em>
       </span>
-      ${action.url ? `<a href="${escapeHtml(action.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(action.title || 'Kaynağı')} aç">↗</a>` : '<span></span>'}
+      ${actionUrl ? `<a href="${escapeHtml(actionUrl)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" data-official-action-id="${escapeHtml(action.id || '')}" data-access-mode="${escapeHtml(action.accessMode || '')}" aria-label="${escapeHtml(action.title || 'Kaynağı')} aç">↗</a>` : '<span></span>'}
     </article>`;
   }).join('');
+}
+
+function renderMunicipalityAccessSummary(registry = {}) {
+  if (!elements.municipalityAccessSummary) return;
+  const authority = registry.selectedAuthority;
+  if (!authority) { elements.municipalityAccessSummary.hidden = true; elements.municipalityAccessSummary.innerHTML = ''; return; }
+  const access = {
+    A1: ['Girişsiz resmî portal', 'Kullanıcı açar; otomatik form işlemi yapılmaz.'],
+    A4: ['e-Devlet / SSO', 'Resmî oturum gerekebilir; Planlamasyon şifre veya oturum bilgisi istemez.'],
+    PENDING: ['Erişim denetimi bekliyor', 'Belediye resmî envanterde; imar hizmetinin erişim türü henüz doğrulanmadı.']
+  }[authority.accessClassKey] || ['Erişim durumu bilinmiyor', 'Güncel resmî hizmet kullanıcı tarafından kontrol edilmelidir.'];
+  elements.municipalityAccessSummary.hidden = false;
+  elements.municipalityAccessSummary.className = `municipality-access-summary is-${String(authority.accessClassKey || 'pending').toLowerCase()}`;
+  elements.municipalityAccessSummary.innerHTML = `
+    <div><span class="section-kicker">Yetkili idare eşleşmesi</span><strong>${escapeHtml(authority.authority || 'Yetkili belediye')}</strong><small>${escapeHtml(authority.municipalityType || '')} · Kurum kodu ${escapeHtml(authority.institutionCode || '—')}</small></div>
+    <div class="municipality-access-state"><strong>${escapeHtml(access[0])}</strong><span>${escapeHtml(access[1])}</span><small>${authority.lastCheckedAt ? `Denetim: ${escapeHtml(authority.lastCheckedAt)}` : 'Canlı erişim denetimi tamamlanmadı'}</small></div>`;
 }
 function renderPlanRecords(records = [], planContext = {}) {
   const list = Array.isArray(records) ? records : [];
@@ -1075,12 +1106,12 @@ function renderPlanAi(planAi = {}) {
 
 function openPlanAiDrawer() {
   if (!state.analysis) {
-    openDrawer('✦ Plan AI · v3.7.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
+    openDrawer('✦ Plan AI · v3.8.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
     return;
   }
   const ai = state.analysis.planAi || {};
   const degraded = Boolean(ai.degraded || ai.configured === false || ['disabled', 'unavailable', 'no-values', 'review-required'].includes(ai.status));
-  openDrawer('✦ Plan AI · v3.7.0', `
+  openDrawer('✦ Plan AI · v3.8.0', `
     <div class="plan-ai-chat">
       <div class="plan-ai-chat-status"><strong>${escapeHtml(degraded ? 'Sınırlı açıklama modu' : 'Plan AI aktif')}</strong><span>${escapeHtml(degraded ? 'Canlı AI yanıt veremezse yalnız mevcut analizde yazan değerler özetlenir; yeni imar değeri tahmin edilmez.' : ai.message || 'Mevcut analiz üzerinden soru sorabilirsiniz.')}</span></div>
       <div class="plan-ai-suggestions">
@@ -1217,6 +1248,7 @@ function resetAnalysisPanels() {
   elements.warningList.innerHTML = '<div class="empty-state-inline">Kaynaklar kontrol ediliyor…</div>';
   elements.technicalList.innerHTML = '<div class="is-missing"><dt>Resmî kaynaklar</dt><dd>Kontrol ediliyor…</dd><small>Parsel, plan ve belediye bağlantıları inceleniyor.</small></div>';
   elements.officialServicesBadge.className = 'data-badge'; elements.officialServicesBadge.textContent = 'Hazırlanıyor';
+  if (elements.municipalityAccessSummary) { elements.municipalityAccessSummary.hidden = true; elements.municipalityAccessSummary.innerHTML = ''; }
   elements.officialServicesIntro.textContent = 'e-Plan, TUCBS ve ilgili belediyenin resmî imar hizmeti aranıyor.';
   elements.officialServicesGrid.innerHTML = '<div class="official-services-empty">Resmî imar sorgu yolları hazırlanıyor…</div>';
   elements.planRecordsBadge.className = 'data-badge'; elements.planRecordsBadge.textContent = 'Hazırlanıyor';
@@ -1259,9 +1291,131 @@ function setupActions() {
   elements.favoriteButton.addEventListener('click', toggleFavorite);
   elements.shareSummaryButton?.addEventListener('click', shareCurrentSummary);
   elements.printReportButton?.addEventListener('click', openReportPanel);
+  elements.copyParcelReferenceButton?.addEventListener('click', copyParcelReference);
+  elements.queryRestoreButton?.addEventListener('click', restoreQueryContext);
   elements.metricQuality?.addEventListener('click', () => elements.metricQuality.classList.toggle('is-expanded'));
   elements.addEvidenceButton.addEventListener('click', openEvidenceForm);
   elements.requestAnalysisButton.addEventListener('click', openRequestForm);
+  elements.primaryOfficialServiceLink?.addEventListener('click', () => recordOfficialPortalOpen({
+    id: elements.primaryOfficialServiceLink.dataset.actionId,
+    url: elements.primaryOfficialServiceLink.href,
+    accessMode: elements.primaryOfficialServiceLink.dataset.accessMode
+  }));
+  elements.officialServicesGrid?.addEventListener('click', (event) => {
+    const link = event.target.closest('a[data-official-action-id]');
+    if (!link) return;
+    recordOfficialPortalOpen({ id: link.dataset.officialActionId, url: link.href, accessMode: link.dataset.accessMode });
+  });
+  window.addEventListener('pageshow', remindAfterOfficialPortal);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') remindAfterOfficialPortal(); });
+}
+
+async function copyParcelReference() {
+  const p = state.parcelFeature?.properties || state.lastQuery || {};
+  const text = [p.block, p.parcel].every(Boolean) ? `${p.block}/${p.parcel}` : '';
+  if (!text) return showToast('Önce bir parsel sorgulayın.');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else {
+      const input = document.createElement('textarea');
+      input.value = text; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0';
+      document.body.append(input); input.select(); document.execCommand('copy'); input.remove();
+    }
+    showToast(`Ada/parsel ${text} kopyalandı.`, 'success');
+  } catch {
+    showToast(`Ada/parsel: ${text}`, 'warning');
+  }
+}
+
+function saveQueryContext(extra = {}) {
+  const previous = readObjectStore(STORE_KEYS.queryContext);
+  const query = sanitizeStoredQuery(state.lastQuery) || sanitizeStoredQuery(previous.query);
+  if (!query) return false;
+  const previousQuery = sanitizeStoredQuery(previous.query);
+  const sameQuery = previousQuery && ['province', 'district', 'neighbourhoodId', 'block', 'parcel'].every((key) => String(previousQuery[key] || '') === String(query[key] || ''));
+  const serviceUrl = safeStoredUrl(extra.serviceUrl || (sameQuery ? previous.serviceUrl : ''));
+  const record = {
+    schemaVersion: 1,
+    query,
+    updatedAt: new Date().toISOString(),
+    serviceId: cleanStoreText(extra.serviceId || (sameQuery ? previous.serviceId : ''), 160),
+    serviceUrl,
+    accessMode: cleanStoreText(extra.accessMode || (sameQuery ? previous.accessMode : ''), 80),
+    openedAt: extra.openedAt ? safeStoredDate(extra.openedAt) : sameQuery ? safeStoredDate(previous.openedAt) : ''
+  };
+  const saved = writeObjectStore(STORE_KEYS.queryContext, record);
+  if (saved) renderQueryRestoreBanner(record);
+  return saved;
+}
+
+function renderQueryRestoreBanner(input) {
+  if (!elements.queryRestoreBanner) return;
+  const record = input && typeof input === 'object' ? input : readObjectStore(STORE_KEYS.queryContext);
+  const query = sanitizeStoredQuery(record.query);
+  if (!query) { elements.queryRestoreBanner.hidden = true; return; }
+  elements.queryRestoreBanner.hidden = false;
+  elements.queryRestoreText.textContent = `${[query.province, query.district, query.neighbourhood].filter(Boolean).join(' / ')} · ${query.block}/${query.parcel}`;
+}
+
+async function restoreQueryContext() {
+  const record = readObjectStore(STORE_KEYS.queryContext);
+  const query = sanitizeStoredQuery(record.query);
+  if (!query) return showToast('Geri getirilecek sorgu bulunamadı.');
+  elements.queryRestoreButton.disabled = true;
+  try {
+    const province = findNamedItem(state.provinces, query.province);
+    if (!province) throw new Error('Kayıtlı il güncel TKGM listesinde bulunamadı.');
+    elements.province.value = String(province.id);
+    await onProvinceChange();
+    const district = findNamedItem(state.districts, query.district);
+    if (!district) throw new Error('Kayıtlı ilçe güncel TKGM listesinde bulunamadı.');
+    elements.district.value = String(district.id);
+    await onDistrictChange();
+    const neighbourhood = state.neighbourhoods.find((item) => String(item.id) === String(query.neighbourhoodId)) || findNamedItem(state.neighbourhoods, query.neighbourhood);
+    if (!neighbourhood) throw new Error('Kayıtlı mahalle veya köy güncel TKGM listesinde bulunamadı.');
+    elements.neighbourhood.value = String(neighbourhood.id);
+    onNeighbourhoodChange();
+    elements.block.value = query.block;
+    elements.parcel.value = query.parcel;
+    state.lastQuery = { ...query, neighbourhoodId: neighbourhood.id, neighbourhood: neighbourhood.name };
+    syncSubmitState();
+    elements.parcelForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast('Sorgu forma geri getirildi; çalıştırmak için mavi düğmeye dokunun.', 'success');
+  } catch (error) {
+    showToast(readableError(error), 'error');
+  } finally {
+    elements.queryRestoreButton.disabled = false;
+  }
+}
+
+function findNamedItem(items, name) {
+  const key = String(name || '').trim().toLocaleLowerCase('tr-TR');
+  return (items || []).find((item) => String(item.name || '').trim().toLocaleLowerCase('tr-TR') === key) || null;
+}
+
+function recordOfficialPortalOpen(action = {}) {
+  const serviceUrl = safeStoredUrl(action.url);
+  if (!serviceUrl || !state.lastQuery) return;
+  saveQueryContext({
+    serviceId: action.id,
+    serviceUrl,
+    accessMode: action.accessMode,
+    openedAt: new Date().toISOString()
+  });
+  if (String(action.accessMode) === 'official-login-service' || new URL(serviceUrl).hostname.endsWith('turkiye.gov.tr')) {
+    showToast('e-Devlet şifrenizi yalnız turkiye.gov.tr ekranına girin. Planlamasyon şifre veya oturum bilgisi saklamaz.', 'warning');
+  } else {
+    showToast('Ada/parsel sorgunuz korundu. Resmî belgeyi indirdikten sonra Planlamasyon’a dönebilirsiniz.');
+  }
+}
+
+function remindAfterOfficialPortal() {
+  const record = readObjectStore(STORE_KEYS.queryContext);
+  const openedAt = Date.parse(record.openedAt || '');
+  if (!Number.isFinite(openedAt) || Date.now() - openedAt > 30 * 60 * 1000) return;
+  if (state.officialPortalReminderAt && Date.now() - state.officialPortalReminderAt < 30_000) return;
+  state.officialPortalReminderAt = Date.now();
+  showToast('Resmî sonucu indirdiyseniz “Resmî Belge Yükle ve Hesapla” ile güvenli analize ekleyebilirsiniz.', 'success');
 }
 
 async function shareCurrentSummary() {
@@ -1525,6 +1679,7 @@ async function onMapClick(event) {
     const feature = await apiTkgm('coordinate', { lat: event.latlng.lat, lon: event.latlng.lng });
     const p = feature.properties || {};
     state.lastQuery = { province: p.province, district: p.district, neighbourhood: p.neighbourhood, neighbourhoodId: p.neighbourhoodId, block: p.block, parcel: p.parcel };
+    saveQueryContext();
     await renderParcelAndAnalyze(feature, { scroll: true });
     state.mapClickActive = false;
     elements.mapClick.setAttribute('aria-pressed', 'false');
@@ -1547,15 +1702,15 @@ function openEvidenceForm() {
 
       <section class="document-reader-card" aria-labelledby="documentReaderTitle">
         <div class="document-reader-heading">
-          <div><span class="section-kicker">Belge okuma motoru · v3.7.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
+          <div><span class="section-kicker">Belge okuma motoru · v3.8.0</span><h4 id="documentReaderTitle">Resmî belgeyi güvenli biçimde oku</h4></div>
           <span class="data-badge" id="documentReaderBadge">Hazır</span>
         </div>
         <div class="document-tabs" role="tablist" aria-label="Belge giriş yöntemi">
-          <button type="button" class="document-tab is-active" data-document-tab="file">Dosya</button>
-          <button type="button" class="document-tab" data-document-tab="url">Bağlantı</button>
-          <button type="button" class="document-tab" data-document-tab="text">Metin</button>
+          <button type="button" class="document-tab is-active" id="documentTabFile" role="tab" aria-selected="true" aria-controls="documentPanelFile" data-document-tab="file">Dosya</button>
+          <button type="button" class="document-tab" id="documentTabUrl" role="tab" aria-selected="false" aria-controls="documentPanelUrl" tabindex="-1" data-document-tab="url">Bağlantı</button>
+          <button type="button" class="document-tab" id="documentTabText" role="tab" aria-selected="false" aria-controls="documentPanelText" tabindex="-1" data-document-tab="text">Metin</button>
         </div>
-        <div class="document-tab-panel" data-document-panel="file">
+        <div class="document-tab-panel" id="documentPanelFile" role="tabpanel" aria-labelledby="documentTabFile" data-document-panel="file">
           <label class="document-drop-zone" for="officialDocumentFile">
             <input id="officialDocumentFile" type="file" accept=".pdf,.txt,.html,.htm,.json,.xml,.gml,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf,text/plain,text/html,application/json,application/xml">
             <span class="document-drop-icon">⇧</span>
@@ -1564,11 +1719,11 @@ function openEvidenceForm() {
           </label>
           <div class="document-file-summary" id="documentFileSummary" hidden></div>
         </div>
-        <div class="document-tab-panel" data-document-panel="url" hidden>
+        <div class="document-tab-panel" id="documentPanelUrl" role="tabpanel" aria-labelledby="documentTabUrl" data-document-panel="url" hidden>
           <div class="field"><label for="documentSourceUrl">Resmî PDF / belge bağlantısı</label><input id="documentSourceUrl" type="url" placeholder="https://...pdf"></div>
           <p class="field-help">Herkese açık HTTPS PDF, HTML, JSON veya XML bağlantıları sunucu üzerinden okunabilir. e-Devlet oturumu isteyen ekranlar için belgeyi indirip Dosya sekmesinden yükleyin.</p>
         </div>
-        <div class="document-tab-panel" data-document-panel="text" hidden>
+        <div class="document-tab-panel" id="documentPanelText" role="tabpanel" aria-labelledby="documentTabText" data-document-panel="text" hidden>
           <div class="field"><label for="documentPastedText">Belge metnini yapıştırın</label><textarea id="documentPastedText" rows="8" placeholder="İmar durumu veya plan notu metni..."></textarea></div>
         </div>
         <label class="drawer-check document-source-confirm"><input type="checkbox" id="documentOfficialSourceConfirm"><span>Bu dosyayı veya metni resmî kurum sayfasından ben aldım ve yalnız kendi sorgum için okunmasını onaylıyorum.</span></label>
@@ -1670,15 +1825,30 @@ function setupDocumentReader(form) {
 
   tabs.forEach((button) => button.addEventListener('click', () => {
     activeTab = button.dataset.documentTab;
-    tabs.forEach((item) => item.classList.toggle('is-active', item === button));
+    tabs.forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-selected', String(active));
+      item.tabIndex = active ? 0 : -1;
+    });
     panels.forEach((panel) => { panel.hidden = panel.dataset.documentPanel !== activeTab; });
+  }));
+  tabs.forEach((button, index) => button.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+    tabs[nextIndex].click();
+    tabs[nextIndex].focus();
   }));
 
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0];
     if (!file) { fileSummary.hidden = true; return; }
+    const validationError = validateOfficialDocumentFile(file);
     fileSummary.hidden = false;
-    fileSummary.innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${formatFileSize(file.size)} · ${escapeHtml(file.type || 'Dosya')}</span>`;
+    fileSummary.classList.toggle('is-error', Boolean(validationError));
+    fileSummary.innerHTML = `<strong>${escapeHtml(file.name)}</strong><span>${formatFileSize(file.size)} · ${escapeHtml(file.type || 'Dosya')}</span>${validationError ? `<small>${escapeHtml(validationError)}</small>` : '<small>Dosya cihazınızda okunacak; ham dosya Planlamasyon sunucusuna gönderilmeyecek.</small>'}`;
+    readButton.disabled = Boolean(validationError);
   });
 
   readButton.addEventListener('click', async () => {
@@ -1694,7 +1864,8 @@ function setupDocumentReader(form) {
       if (activeTab === 'file') {
         const file = fileInput.files?.[0];
         if (!file) throw new Error('Önce bir belge dosyası seçin.');
-        if (file.size > 12 * 1024 * 1024) throw new Error('Belge 12 MB sınırını aşıyor.');
+        const validationError = validateOfficialDocumentFile(file);
+        if (validationError) throw new Error(validationError);
         status.innerHTML = '<strong>Belge cihazınızda okunuyor</strong><span>PDF metni veya Türkçe OCR hazırlanıyor. Belge dosyanız sunucuya yüklenmez; yalnızca çıkarılan metin analiz edilir.</span>';
         const extracted = await extractTextFromOfficialFile(file, (message, progress) => {
           status.innerHTML = `<strong>${escapeHtml(message)}</strong><span>${progress != null ? `%${Math.round(progress * 100)} tamamlandı` : 'Lütfen bekleyin.'}</span>`;
@@ -1745,10 +1916,20 @@ function setupDocumentReader(form) {
   });
 
   function setDocumentReaderBusy(busy) {
-    readButton.disabled = busy;
+    readButton.disabled = busy || Boolean(fileInput.files?.[0] && validateOfficialDocumentFile(fileInput.files[0]));
     spinner.hidden = !busy;
     label.textContent = busy ? 'Belge Okunuyor…' : 'Belgeyi Oku ve Alanları Doldur';
   }
+}
+
+function validateOfficialDocumentFile(file) {
+  if (!file) return 'Belge dosyası seçilmedi.';
+  if (file.size > 12 * 1024 * 1024) return 'Belge 12 MB sınırını aşıyor.';
+  const type = String(file.type || '').toLowerCase();
+  const name = String(file.name || '').toLowerCase();
+  const supported = type === 'application/pdf' || type.startsWith('image/png') || type.startsWith('image/jpeg') || type.startsWith('text/')
+    || /\.(pdf|png|jpe?g|txt|html?|json|xml|gml|csv)$/i.test(name);
+  return supported ? '' : 'Bu dosya türü desteklenmiyor. PDF, JPG, PNG veya metin belgesi seçin.';
 }
 
 async function extractTextFromOfficialFile(file, onProgress = () => {}) {
@@ -1883,6 +2064,8 @@ function renderDocumentExtractionResult(container, parsed) {
   container.innerHTML = `
     <div class="document-result-summary">
       <div><span>Belge türü</span><strong>${escapeHtml(parsed.documentTypeLabel || 'Resmî belge')}</strong></div>
+      <div><span>Yetkili idare</span><strong>${escapeHtml(parsed.evidence?.authority || 'Belgeden doğrulanamadı')}</strong></div>
+      <div><span>Belge tarihi</span><strong>${escapeHtml(formatIsoDate(parsed.evidence?.documentDate) || 'Belgeden doğrulanamadı')}</strong></div>
       <div><span>Ada/parsel</span><strong class="${parcelClass}">${escapeHtml(parsed.parcelMatch?.message || 'Kontrol gerekli')}</strong></div>
       <div><span>Okuma güveni</span><strong>${escapeHtml(confidenceLabel)}</strong></div>
       <div><span>Tamamlanma</span><strong>%${Number(parsed.completeness?.percentage || 0)}</strong></div>

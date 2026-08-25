@@ -1,4 +1,4 @@
-export const OFFICIAL_SOURCE_SECURITY_VERSION = '3.7.0';
+export const OFFICIAL_SOURCE_SECURITY_VERSION = '3.8.0';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
@@ -87,6 +87,7 @@ export async function fetchOfficialResource(value, options = {}, {
   allowPostRedirects = false,
   allowCrossOriginRedirects = false,
   allowedRedirectHosts = '',
+  validateUrl = null,
   maxResponseBytes = 5_000_000
 } = {}) {
   if (typeof fetchImpl !== 'function') throw securityError('Sunucuda güvenli ağ erişimi bulunmuyor.', 'FETCH_UNAVAILABLE');
@@ -102,7 +103,7 @@ export async function fetchOfficialResource(value, options = {}, {
     throw securityError('Yetkili form isteği güvenli gövde boyutu sınırını aşıyor.', 'REQUEST_BODY_TOO_LARGE');
   }
 
-  const startUrl = validatePublicHttpsUrl(value);
+  const startUrl = applyAdditionalUrlValidation(validatePublicHttpsUrl(value), validateUrl);
   const startOrigin = new URL(startUrl).origin;
   const deadline = Date.now() + clampInt(timeoutMs, 250, 15_000, 1800);
   const retries = IDEMPOTENT_METHODS.has(method) ? clampInt(retryCount, 0, 1, 1) : 0;
@@ -136,7 +137,9 @@ export async function fetchOfficialResource(value, options = {}, {
           clearTimeout(timer);
         }
 
-        const reportedUrl = response?.url ? validatePublicHttpsUrl(response.url) : requestUrl;
+        const reportedUrl = response?.url
+          ? applyAdditionalUrlValidation(validatePublicHttpsUrl(response.url), validateUrl)
+          : requestUrl;
         if (reportedUrl !== requestUrl) {
           assertRedirectAllowed(requestUrl, reportedUrl, {
             startOrigin, allowCrossOriginRedirects, allowedRedirectHosts
@@ -156,7 +159,10 @@ export async function fetchOfficialResource(value, options = {}, {
         }
         const location = response?.headers?.get?.('location');
         if (!location) throw securityError('Resmî kaynak yönlendirmesi hedef adres içermiyor.', 'INVALID_REDIRECT');
-        const nextUrl = validatePublicHttpsUrl(new URL(location, requestUrl).toString());
+        const nextUrl = applyAdditionalUrlValidation(
+          validatePublicHttpsUrl(new URL(location, requestUrl).toString()),
+          validateUrl
+        );
         assertRedirectAllowed(requestUrl, nextUrl, {
           startOrigin, allowCrossOriginRedirects, allowedRedirectHosts
         });
@@ -309,6 +315,12 @@ function assertResponseSize(response, maxBytes) {
 function defineFinalUrl(response, value) {
   if (!response || !value) return;
   try { Object.defineProperty(response, 'officialFinalUrl', { value, configurable: true }); } catch {}
+}
+
+function applyAdditionalUrlValidation(value, validateUrl) {
+  if (typeof validateUrl !== 'function') return value;
+  const validated = validateUrl(value);
+  return validated == null ? value : validatePublicHttpsUrl(validated);
 }
 
 function parseDate(value) {

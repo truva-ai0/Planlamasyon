@@ -8,6 +8,71 @@ import { enhanceZoningWithPlanAI } from './plan-ai-client.mjs';
 const CACHE = globalThis.__PLANLAMASYON_ZONING_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_ZONING_CACHE__ = CACHE;
 
+const EVIDENCE_BOUND_FIELDS = [
+  'landUse', 'netParcelArea', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder',
+  'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'
+];
+
+/**
+ * v3.8 belge okuyucusunun alan kanıtı, çıkarılan normalize değerini de taşır.
+ * Kullanıcı formda değeri değiştirirse eski alıntı/yüksek güven etiketi yeni değere
+ * uygulanmaz. Eski sürüm kayıtlarında `fieldEvidence.value` bulunmadığı için bu
+ * kayıtlar geriye dönük olarak korunur ve kullanıcı belgesi sınıfında kalır.
+ */
+export function bindUserEvidenceToExtraction(input = {}) {
+  if (!input || typeof input !== 'object') return { evidence: input, mismatchedFields: [], legacyUnboundFields: [] };
+  const nested = input.fields && typeof input.fields === 'object' && !Array.isArray(input.fields);
+  const values = nested ? { ...input.fields } : { ...input };
+  const originalEvidence = input.fieldEvidence && typeof input.fieldEvidence === 'object' && !Array.isArray(input.fieldEvidence)
+    ? input.fieldEvidence
+    : {};
+  const fieldEvidence = Object.fromEntries(Object.entries(originalEvidence).map(([key, item]) => [key, item && typeof item === 'object' ? { ...item } : item]));
+  const mismatchedFields = [];
+  const legacyUnboundFields = [];
+
+  for (const field of EVIDENCE_BOUND_FIELDS) {
+    if (values[field] == null || values[field] === '') continue;
+    const proof = fieldEvidence[field];
+    if (!proof || typeof proof !== 'object' || !Object.prototype.hasOwnProperty.call(proof, 'value')) {
+      legacyUnboundFields.push(field);
+      continue;
+    }
+    if (boundEvidenceValueEquals(field, values[field], proof.value)) {
+      proof.bindingStatus = 'exact';
+      continue;
+    }
+    mismatchedFields.push(field);
+    values[field] = null;
+    fieldEvidence[field] = {
+      ...proof,
+      confidence: 'low',
+      bindingStatus: 'mismatch',
+      method: 'evidence-value-mismatch'
+    };
+  }
+
+  const evidence = nested
+    ? { ...input, fields: values, fieldEvidence }
+    : { ...values, fieldEvidence };
+  evidence.evidenceBinding = {
+    version: '3.8.0',
+    status: mismatchedFields.length ? 'mismatch' : legacyUnboundFields.length ? 'legacy-unbound' : 'exact',
+    mismatchedFields,
+    legacyUnboundFields
+  };
+  return { evidence, mismatchedFields, legacyUnboundFields };
+}
+
+function boundEvidenceValueEquals(field, current, extracted) {
+  if (['netParcelArea', 'taks', 'emsal', 'floors', 'hmax', 'frontSetback', 'sideSetback', 'rearSetback', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'].includes(field)) {
+    const left = Number(String(current).trim().replace(',', '.'));
+    const right = Number(String(extracted).trim().replace(',', '.'));
+    return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 1e-9;
+  }
+  return String(current).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim()
+    === String(extracted).toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+}
+
 export async function resolveZoning({ parcel, query, evidence, env = process.env, fetchImpl = globalThis.fetch }) {
   const key = parcelKey(parcel, query);
   const records = [];
@@ -65,6 +130,8 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   }
 
   if (evidence?.confirmed === true) {
+    const evidenceBinding = bindUserEvidenceToExtraction(evidence);
+    const boundedEvidence = evidenceBinding.evidence;
     const parcelMatchStatus = String(evidence.parcelMatchStatus || '').toLowerCase();
     const documentType = String(evidence.documentType || '').toLowerCase();
     const parcelAccepted = parcelMatchStatus === 'exact' || (parcelMatchStatus === 'unverified' && evidence.parcelConfirmed === true) || (!parcelMatchStatus && evidence.parcelConfirmed !== false);
@@ -72,19 +139,27 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
     if (parcelMatchStatus === 'mismatch') diagnostics.push({ connector: 'user-official-document', message: 'Yüklenen belge ada/parseli sorguyla eşleşmediği için uygulanmadı.' });
     else if (!parcelAccepted) diagnostics.push({ connector: 'user-official-document', message: 'Yüklenen belgenin bu parsele ait olduğu onaylanmadığı için uygulanmadı.' });
     else if (!documentEligible) diagnostics.push({ connector: 'user-official-document', message: 'Tarihsel plan/askı kaydı güncel yapılaşma hakkı olarak uygulanmadı.' });
-    else records.push(normalizeProviderRecord(evidence, {
-      id: evidence.documentHash ? `user-official-document-${String(evidence.documentHash).slice(0, 16)}` : 'user-official-document',
-      title: evidence.sourceTitle || evidence.planName || 'Kullanıcının eklediği resmî imar belgesi',
-      provider: evidence.authority || 'Belgeyi düzenleyen idare',
-      trust: 'user-evidence',
-      sourceClass: 'user-official-document',
-      accessMode: 'user-upload',
-      automationPolicy: 'user-confirmed-document',
-      url: evidence.sourceUrl || null,
-      note: evidence.parserVersion
-        ? `Belge Planlamasyon ${evidence.parserVersion} okuma motoruyla tarandı ve kullanıcı tarafından kontrol edilerek onaylandı. Ada/parsel durumu: ${parcelMatchStatus || 'kullanıcı onayı'}. Ruhsat öncesinde yetkili idare teyidi gerekir.`
-        : 'Değerler kullanıcı tarafından resmî belgeden girildi; Planlamasyon belge güncelliğini bağımsız olarak doğrulamaz.'
-    }));
+    else {
+      if (evidenceBinding.mismatchedFields.length) {
+        diagnostics.push({
+          connector: 'user-official-document',
+          message: `Belge okumasından sonra değiştirilen ${evidenceBinding.mismatchedFields.join(', ')} alanları eski otomatik kanıtla eşleşmediği için hesapta kullanılmadı.`
+        });
+      }
+      records.push(normalizeProviderRecord(boundedEvidence, {
+        id: evidence.documentHash ? `user-official-document-${String(evidence.documentHash).slice(0, 16)}` : 'user-official-document',
+        title: evidence.sourceTitle || evidence.planName || 'Kullanıcının eklediği resmî imar belgesi',
+        provider: evidence.authority || 'Belgeyi düzenleyen idare',
+        trust: 'user-evidence',
+        sourceClass: 'user-official-document',
+        accessMode: 'user-upload',
+        automationPolicy: 'user-confirmed-document',
+        url: evidence.sourceUrl || null,
+        note: evidence.parserVersion
+          ? `Belge Planlamasyon ${evidence.parserVersion} okuma motoruyla tarandı ve kullanıcı tarafından kontrol edilerek onaylandı. Ada/parsel durumu: ${parcelMatchStatus || 'kullanıcı onayı'}. Ruhsat öncesinde yetkili idare teyidi gerekir.`
+          : 'Değerler kullanıcı tarafından resmî belgeden girildi; Planlamasyon belge güncelliğini bağımsız olarak doğrulamaz.'
+      }));
+    }
   }
 
   const providerDiscovery = await providerDiscoveryPromise;
@@ -153,7 +228,7 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   configuration.planAiEvidenceCount = Number(planAi?.evidenceCount || 0);
   configuration.planAiEvidenceBackedFieldCount = Number(planAi?.evidenceBackedFields?.length || 0);
   configuration.boundedAnalysis = true;
-  configuration.boundedAnalysisVersion = '3.7.0';
+  configuration.boundedAnalysisVersion = '3.8.0';
 
   const publicPlanRecord = buildPublicPlanMetadataRecord(planContext);
   if (publicPlanRecord) records.push(publicPlanRecord);
@@ -428,6 +503,7 @@ function normalizeProviderRecord(input, sourceDefaults) {
     documentDate: clean(input?.documentDate || sourceInput.documentDate || input?.planDate, 40),
     documentName: clean(input?.documentName || sourceInput.documentName, 260),
     documentHash: clean(input?.documentHash || sourceInput.documentHash, 80),
+    documentHashKind: clean(input?.documentHashKind || sourceInput.documentHashKind, 80),
     parserVersion: clean(input?.parserVersion || sourceInput.parserVersion, 40),
     extractionConfidence: clean(input?.extractionConfidence || sourceInput.extractionConfidence || sourceInput.confidence, 40),
     parcelMatchStatus: clean(input?.parcelMatchStatus || sourceInput.parcelMatchStatus, 40),
@@ -435,6 +511,9 @@ function normalizeProviderRecord(input, sourceDefaults) {
       ? input.fieldEvidence
       : sourceInput.fieldEvidence && typeof sourceInput.fieldEvidence === 'object' ? sourceInput.fieldEvidence : {},
     retrievedAt: clean(input?.retrievedAt || sourceInput.retrievedAt, 40) || new Date().toISOString(),
+    sourceLastModified: clean(input?.sourceLastModified || sourceInput.sourceLastModified, 40),
+    sourceVerification: clean(input?.sourceVerification || sourceInput.sourceVerification, 80),
+    evidenceOrigin: clean(input?.evidenceOrigin || sourceInput.evidenceOrigin, 80),
     verifiedAt: clean(input?.verifiedAt || sourceInput.verifiedAt, 40),
     sourceClass: clean(sourceDefaults.sourceClass || sourceInput.sourceClass, 80),
     accessMode: clean(sourceDefaults.accessMode || sourceInput.accessMode, 80),
@@ -712,6 +791,9 @@ function publicFieldSource(source = {}, field = '') {
     url: safeUrl(source.url),
     documentDate: clean(source.documentDate, 40),
     retrievedAt: clean(source.retrievedAt, 40),
+    sourceLastModified: clean(source.sourceLastModified, 40),
+    sourceVerification: clean(source.sourceVerification, 80),
+    evidenceOrigin: clean(source.evidenceOrigin, 80),
     confidence,
     extractionConfidence: confidence,
     excerpt: clean(evidence?.excerpt || evidence?.quote, 520),
@@ -720,6 +802,7 @@ function publicFieldSource(source = {}, field = '') {
     parcelMatchStatus: clean(source.parcelMatchStatus, 40),
     documentName: clean(source.documentName, 260),
     documentHash: clean(source.documentHash, 80),
+    documentHashKind: clean(source.documentHashKind, 80),
     verifiedAt: clean(source.verifiedAt, 40),
     sourceClass: clean(source.sourceClass, 80),
     accessMode: clean(source.accessMode, 80),

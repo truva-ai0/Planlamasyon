@@ -166,7 +166,7 @@ async function queryEndpoint({ endpoint, query, fetchImpl, timeoutMs, env }) {
         ...request.init,
         headers: {
           Accept: 'application/json, text/plain;q=0.9, */*;q=0.5',
-          'User-Agent': clean(env.OVERPASS_USER_AGENT, 240) || 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)',
+          'User-Agent': clean(env.OVERPASS_USER_AGENT, 240) || 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com)',
           ...(clean(env.OVERPASS_REFERER, 240) ? { Referer: clean(env.OVERPASS_REFERER, 240) } : {}),
           ...(request.init.headers || {})
         },
@@ -232,7 +232,7 @@ async function queryNominatimFallback({ center, radius, fetchImpl, env }) {
         headers: {
           Accept: 'application/json',
           'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-          'User-Agent': clean(env.NOMINATIM_USER_AGENT, 240) || 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com)'
+          'User-Agent': clean(env.NOMINATIM_USER_AGENT, 240) || 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com)'
         },
         signal: controller.signal
       });

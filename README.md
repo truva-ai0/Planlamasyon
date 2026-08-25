@@ -1,4 +1,25 @@
-# Planlamasyon v3.7.0 — Güvenli Resmî Kaynak ve Taşınabilir Müşteri Kaydı
+# Planlamasyon v3.8.0 — Türkiye Belediye Envanteri ve Güvenli Resmî Belge Akışı
+
+## v3.8.0 yenilikleri
+
+- 21.04.2026 tarihli resmî kurum envanterindeki **1.407 belediye** uygulamaya gömüldü. İl, ilçe ve gerektiğinde mahalle/belde eşleşmesiyle olası yetkili idare seçilir; kurum kodu, belediye türü ve erişim sınıfı kullanıcıya gösterilir.
+- Erişim türleri ayrı tutulur: `A1` girişsiz resmî portal, `A4` e-Devlet/SSO ve `BEKLIYOR` canlı denetimi tamamlanmamış kayıt. Katalog 193 e-Devlet hizmeti ile Beşiktaş/Şişli açık portal kayıtlarını güvenli yönlendirme olarak taşır; hiçbir bağlantı otomatik veri okunmuş gibi sunulmaz.
+- e-Devlet hizmeti yalnız yeni sekmede ve doğrudan `turkiye.gov.tr` üzerinde açılır. Planlamasyon e-Devlet şifresi, çerezi veya oturum bilgisini istemez, saklamaz ve iframe içinde çalıştırmaz.
+- Ada/parsel tek dokunuşla kopyalanır. Resmî portala giderken il/ilçe/mahalle/ada/parsel bağlamı cihazda korunur; kullanıcı döndüğünde form geri getirilebilir fakat sorgu kendiliğinden çalıştırılmaz.
+- PDF/JPG/PNG/metin belgesi cihazda okunur; ham dosya sunucuya yüklenmez. Ada/parsel ve belge türü kontrolünden geçen TAKS, KAKS/emsal, kat, Yençok/Hmax, yapı nizamı, net imar alanı, çekme mesafeleri ve belgede açıkça yazan bahçe m² alanları kaynak iziyle taşınır.
+- Eksik, koşullu, çelişkili, eski/taslak, düşük güvenli veya yanlış parsele ait değerlerden hesap üretilmez. Belge tarihi, yetkili idare, alıntı ve güven düzeyi korunur.
+- Cloudflare istek gövdeleri akış sırasında boyutlandırılır; Wrangler 4.125.0 sabitlenmiş, güncel Workers uyumluluk tarihi ve gözlemlenebilirlik ayarı eklenmiştir.
+
+## Güvenli e-Devlet yolu
+
+1. Planlamasyon doğru resmî hizmeti yeni sekmede açar ve ada/parseli korur.
+2. Kullanıcı e-Devlet veya belediye ekranındaki işlemi yalnız resmî sitede tamamlar.
+3. Kullanıcı indirdiği güncel resmî belgeyi Planlamasyon’a ekler.
+4. Sistem yalnız belgeyle kanıtlanan alanları hesaplar ve eksikleri açıkça gösterir.
+
+Türksat/kurum onayı alınana kadar kullanıcı oturumu otomatik okunmaz. Resmî entegrasyon açıldığında da ayrı kurum yetkisi, veri işleme sözleşmesi ve güvenlik değerlendirmesi gerekir.
+
+# Önceki sürüm: Planlamasyon v3.7.0 — Güvenli Resmî Kaynak ve Taşınabilir Müşteri Kaydı
 
 ## v3.7.0 yenilikleri
 

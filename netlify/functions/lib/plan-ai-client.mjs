@@ -7,7 +7,7 @@ import {
   safePublicHttpsUrl
 } from './official-source-security.mjs';
 
-export const PLAN_AI_VERSION = '3.7.0';
+export const PLAN_AI_VERSION = '3.8.0';
 export const PLAN_AI_MODEL = 'stepfun-ai/step-3.7-flash';
 export const PLAN_AI_ENDPOINT = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const PLAN_AI_STATUS_ENDPOINT = 'https://integrate.api.nvidia.com/v1/status';
@@ -390,7 +390,7 @@ async function fetchEvidence(candidate, { fetchImpl, timeoutMs, expected }) {
       headers: {
         Accept: 'application/pdf,text/html,application/xhtml+xml,text/plain,application/json,application/xml,text/xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; Plan-AI-official-source-reader)'
+        'User-Agent': 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com; Plan-AI-official-source-reader)'
       }
     }, { fetchImpl, timeoutMs, retryCount: 1, maxRedirects: 2, maxResponseBytes: 5 * 1024 * 1024 });
     if ([401,403].includes(response.status)) return { status: 'login-or-blocked', message: `Kaynak ${response.status} yanıtı verdi.`, evidence: [] };
@@ -436,7 +436,7 @@ async function fetchEvidence(candidate, { fetchImpl, timeoutMs, expected }) {
 async function fetchLinkedDocument(url, { fetchImpl, timeoutMs, expected, parent }) {
   try {
     const response = await fetchOfficialResource(url, {
-      headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.7.0 (+https://planlamasyon.truva-ai.com; Plan-AI-linked-official-document)' }
+      headers: { Accept: 'application/pdf,text/html,text/plain,*/*;q=0.2', 'User-Agent': 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com; Plan-AI-linked-official-document)' }
     }, { fetchImpl, timeoutMs, retryCount: 1, maxRedirects: 2, maxResponseBytes: 5 * 1024 * 1024 });
     if (!response.ok) return null;
     const bytes = await readResponseBytesLimited(response, 5 * 1024 * 1024);

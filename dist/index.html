@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <link rel="stylesheet" href="/styles.css?v=3.7.0">
+  <link rel="stylesheet" href="/styles.css?v=3.8.0">
   <script>
     (() => {
       let theme = 'dark';
@@ -67,7 +67,7 @@
         <p>Parselinizi bulun. Planlamasyon kadastro, doğrulanabilen plan bilgileri, mevzuat ve yakın çevre verilerini tek sonuçta toplasın.</p>
         <div class="hero-actions">
           <button class="button button-primary" id="startButton" type="button">Projeni Başlat <span aria-hidden="true">→</span></button>
-          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.7</small></button>
+          <button class="button button-secondary" id="openAiButton" type="button"><span aria-hidden="true">✦</span> Plan AI <small>v3.8</small></button>
         </div>
         <div class="trust-row">
           <span>✓ Kaynak–sonuç ilişkisi</span>
@@ -86,6 +86,11 @@
       <div class="connection-banner" id="connectionBanner" role="status" aria-live="polite">
         <span class="status-dot is-loading"></span>
         <div><strong>TKGM bağlantısı kontrol ediliyor</strong><span>İdari listeler ve parsel geometrisi sunucu üzerinden alınıyor.</span></div>
+      </div>
+
+      <div class="query-restore-banner card" id="queryRestoreBanner" hidden>
+        <div><span class="section-kicker">Kaldığınız yer</span><strong id="queryRestoreText">Son parsel sorgunuz hazır.</strong><small>Form doldurulur; sorgu siz onaylamadan yeniden çalıştırılmaz.</small></div>
+        <button class="mini-button" id="queryRestoreButton" type="button">Sorguyu geri getir</button>
       </div>
 
       <div class="query-layout">
@@ -191,7 +196,7 @@
             <div><span>Parsel alanı</span><strong id="metricArea">—</strong></div>
             <div><span>TKGM kaydındaki taşınmaz niteliği</span><strong id="metricQuality">—</strong></div>
             <div><span>Pafta</span><strong id="metricMapSheet">—</strong></div>
-            <div><span>Ada / Parsel</span><strong id="metricBlockParcel">—</strong></div>
+            <div class="parcel-reference-cell"><span>Ada / Parsel</span><strong id="metricBlockParcel">—</strong><button class="inline-copy-button" id="copyParcelReferenceButton" type="button" aria-label="Ada ve parsel numarasını kopyala">Kopyala</button></div>
           </div>
         </article>
 
@@ -228,7 +233,7 @@
           <p>Planlamasyon yalnız açık veya izinli kaynakları otomatik okur. Diğer resmî hizmetler kullanıcı tarafından açılır; bağlantı bulunması TAKS, emsal veya yapı izni doğrulandığı anlamına gelmez. İsterseniz güncel resmî belgeyle analizi tamamlayabilirsiniz.</p>
         </div>
         <div class="completion-actions">
-          <a class="button button-secondary" id="primaryOfficialServiceLink" href="https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html" target="_blank" rel="noopener noreferrer">Resmî İmar Sorgusunu Aç ↗</a>
+          <a class="button button-secondary" id="primaryOfficialServiceLink" href="https://eplan.csb.gov.tr/e-plan/html/imarDurumu.html" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Resmî İmar Sorgusunu Aç ↗</a>
           <button class="button button-primary" id="addEvidenceButton" type="button">Resmî Belge Yükle ve Hesapla</button>
           <button class="button button-primary" id="requestAnalysisButton" type="button">Analiz Talebi Gönder</button>
         </div>
@@ -237,7 +242,7 @@
 
       <details class="card official-services-card compact-details" id="officialServicesCard">
         <summary class="compact-summary"><span><span class="section-kicker">Resmî imar bağlantıları</span><strong>Yetkili ve ulusal resmî yolları göster</strong></span><span class="data-badge" id="officialServicesBadge">Hazırlanıyor</span></summary>
-        <div class="compact-body"><p class="section-intro" id="officialServicesIntro">e-Plan, TUCBS ve ilgili belediyenin resmî imar hizmeti aranıyor.</p>
+        <div class="compact-body"><div class="municipality-access-summary" id="municipalityAccessSummary" hidden></div><p class="section-intro" id="officialServicesIntro">e-Plan, TUCBS ve ilgili belediyenin resmî imar hizmeti aranıyor.</p>
         <div class="official-services-grid" id="officialServicesGrid"></div></div>
       </details>
 
@@ -303,7 +308,7 @@
     </section>
 
     <footer class="site-footer">
-      <span>© 2026 PLANLAMASYON · v3.7.0</span>
+      <span>© 2026 PLANLAMASYON · v3.8.0</span>
       <nav><button data-footer-panel="about">Hakkımızda</button><button data-footer-panel="contact">İletişim</button><button data-footer-panel="privacy">Gizlilik</button><button data-footer-panel="terms">Kullanım Koşulları</button></nav>
     </footer>
   </main>
@@ -319,6 +324,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="/app.js?v=3.7.0"></script>
+  <script type="module" src="/app.js?v=3.8.0"></script>
 </body>
 </html>

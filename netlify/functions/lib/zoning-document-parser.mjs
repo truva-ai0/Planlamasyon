@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export const ZONING_DOCUMENT_PARSER_VERSION = '3.7.0';
+export const ZONING_DOCUMENT_PARSER_VERSION = '3.8.0';
 
 const FIELD_LABELS = {
   planName: 'Plan adı', planNumber: 'Plan işlem / karar no', planScale: 'Plan ölçeği', planDate: 'Plan / belge tarihi',
@@ -63,6 +63,7 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
   const detectedParcels = detectParcelPairs(rawText);
   const parcelMatch = evaluateParcelMatch(expected, detectedParcels);
   const documentType = detectDocumentType(normalizedText, lines);
+  const documentHash = createHash('sha256').update(rawText, 'utf8').digest('hex');
   const ignoredCandidates = detectIgnoredCandidates(lines);
   const conditionalFields = detectConditionalNumericFields(lines);
 
@@ -73,6 +74,8 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
     fields[key] = result.value;
     fieldEvidence[key] = {
       label: FIELD_LABELS[key] || key,
+      value: result.value,
+      unit: fieldUnit(key),
       confidence: result.confidence || 'medium',
       excerpt: trim(result.excerpt || '', 520),
       method: result.method || 'pattern'
@@ -119,17 +122,24 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
   }
 
   const extractedAt = new Date().toISOString();
-  const documentDate = normalizeMetadataDate(fields.planDate || metadata.documentDate || metadata.lastModified);
+  const documentDate = normalizeMetadataDate(fields.planDate || metadata.documentDate);
+  const sourceLastModified = normalizeTimestamp(metadata.sourceLastModified || metadata.lastModified);
   const retrievedAt = normalizeTimestamp(metadata.retrievedAt) || extractedAt;
   const sourceTitle = cleanValue(metadata.sourceTitle || fields.planName || metadata.fileName || documentTypeLabel(documentType), 280);
   const sourceUrl = safeHttps(metadata.sourceUrl);
   const evidenceContext = {
     sourceTitle,
+    sourceAuthority: fields.authority || cleanValue(metadata.authority, 240),
     sourceUrl,
     documentDate,
+    sourceLastModified,
     retrievedAt,
     parserVersion: ZONING_DOCUMENT_PARSER_VERSION,
-    parcelMatchStatus: parcelMatch.status
+    parcelMatchStatus: parcelMatch.status,
+    documentHash,
+    documentHashKind: 'extracted-text-sha256',
+    sourceVerification: cleanValue(metadata.sourceVerification, 80),
+    evidenceOrigin: cleanValue(metadata.evidenceOrigin, 80)
   };
   for (const item of Object.values(fieldEvidence)) Object.assign(item, evidenceContext);
   if (Array.isArray(fields.setbackConditions)) {
@@ -156,7 +166,6 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
   const roadDedicationPossible = /(?:yol\s+terki|terk\s+işlemi|düzenleme\s+ortaklık\s+payı)/iu.test(rawText) ? true : null;
   const floodDataStatus = /(?:taşkın|dere\s+koruma|su\s+baskını)/iu.test(rawText) ? 'risk' : null;
 
-  const documentHash = createHash('sha256').update(rawText, 'utf8').digest('hex');
   const populatedCore = ['landUse', 'taks', 'emsal', 'floors', 'hmax', 'buildingOrder', 'frontSetback', 'sideSetback', 'rearSetback'].filter((key) => fields[key] != null);
   const requiredMissing = ['landUse', 'taks', 'emsal', 'floors', 'frontSetback', 'sideSetback', 'rearSetback'].filter((key) => fields[key] == null);
   const highConfidenceCount = Object.values(fieldEvidence).filter((item) => item.confidence === 'high').length;
@@ -212,8 +221,10 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
     documentName: cleanValue(metadata.fileName || metadata.documentName, 260),
     documentMimeType: cleanValue(metadata.mimeType, 120),
     documentDate,
+    sourceLastModified,
     retrievedAt,
     documentHash,
+    documentHashKind: 'extracted-text-sha256',
     parserVersion: ZONING_DOCUMENT_PARSER_VERSION,
     documentType,
     extractionConfidence: overallConfidence,
@@ -221,6 +232,8 @@ export function parseZoningDocumentText({ text, query = {}, parcel = null, metad
     detectedParcels,
     ignoredCandidates,
     fieldEvidence,
+    sourceVerification: cleanValue(metadata.sourceVerification, 80),
+    evidenceOrigin: cleanValue(metadata.evidenceOrigin, 80),
     extractedAt
   };
 
@@ -966,6 +979,13 @@ function numericTextOcr(value) {
 }
 function numberOrNull(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
 function integerOrNull(value) { const number = Number(value); return Number.isInteger(number) ? number : null; }
+function fieldUnit(key) {
+  if (['netParcelArea', 'frontGardenArea', 'sideGardenArea', 'rearGardenArea'].includes(key)) return 'm2';
+  if (['frontSetback', 'sideSetback', 'rearSetback', 'hmax'].includes(key)) return 'm';
+  if (['taks', 'emsal'].includes(key)) return 'ratio';
+  if (key === 'floors') return 'kat';
+  return null;
+}
 function cleanValue(value, max = 500) { if (value == null) return null; const text = String(value).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, max) : null; }
 function safeHttps(value) { if (!value) return null; try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.toString() : null; } catch { return null; } }
 function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }

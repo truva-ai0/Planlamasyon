@@ -4,6 +4,11 @@ import {
   MUNICIPALITY_CATALOG_VERSION
 } from './municipality-catalog.mjs';
 import {
+  MUNICIPALITY_ACCESS_REGISTRY,
+  MUNICIPALITY_ACCESS_REGISTRY_STATS,
+  MUNICIPALITY_ACCESS_REGISTRY_VERSION
+} from './municipality-access-registry.mjs';
+import {
   describeSourceFreshness,
   fetchOfficialResource,
   hostMatchesAllowlist,
@@ -26,6 +31,7 @@ const PUBLIC_MUNICIPAL_PORTAL_HINTS = [
     kind: 'municipality-portal',
     title: 'Şişli Belediyesi Web İmar Durum Uygulaması',
     provider: 'Şişli Belediyesi',
+    curatedPortalHint: true,
     url: 'https://kentrehberi.sisli.bel.tr/imardurum/',
     termsUrl: 'https://kentrehberi.sisli.bel.tr/imardurum/legal.aspx',
     note: 'Şişli Belediyesi tarafından yayımlanan bilgi amaçlı imar durumu uygulaması. Kullanım koşulları nedeniyle Planlamasyon bu portalda otomatik sorgu/form işlemi yapmaz; bağlantı kullanıcı tarafından açılır.',
@@ -41,7 +47,8 @@ const PUBLIC_MUNICIPAL_PORTAL_HINTS = [
     kind: 'municipality-portal',
     title: 'Beşiktaş Belediyesi İmar Durumu',
     provider: 'Beşiktaş Belediyesi',
-    url: 'https://besiktas.bel.tr/',
+    curatedPortalHint: true,
+    url: 'https://os.besiktas.bel.tr/',
     termsUrl: 'https://keos.besiktas.bel.tr/imardurumu/legal.aspx',
     note: 'Beşiktaş Belediyesi sitesinden E-Belediye / İmar Durumu hizmetini açın. Yayınlanan koşullar üçüncü taraf otomatik işlemini yasakladığı için Planlamasyon bu portalı taramaz; indirdiğiniz güncel resmî belgeyi kullanıcı onayıyla okuyabilir.',
     verifiedAt: '2026-08-25',
@@ -67,12 +74,17 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
   const configuredConnectors = matchingConnectors(env.MUNICIPALITY_CONNECTORS_JSON, location, env);
   const environmentRegistry = parseRegistry(env.MUNICIPALITY_OFFICIAL_SERVICES_JSON)
     .filter((record) => matchesLocation(record, location))
-    .map((record, index) => normalizeRegistryService(record, location, `environment-${index + 1}`))
+    .map((record, index) => normalizeRegistryService({ ...record, environmentOverride: true }, location, `environment-${index + 1}`))
     .filter(Boolean);
   const embeddedRecords = matchEmbeddedCatalog(location);
   const embeddedServices = embeddedRecords.map(normalizeCatalogService).filter(Boolean);
+  const registryRecords = matchMunicipalityAccessRegistry(location);
+  const selectedRegistryRecord = registryRecords[0] || null;
   const publicPortalHints = PUBLIC_MUNICIPAL_PORTAL_HINTS.filter((record) => matchesLocation(record, location)).map((record) => normalizeRegistryService(record, location, record.id)).filter(Boolean);
-  const municipalServices = dedupeServices([...environmentRegistry, ...publicPortalHints, ...embeddedServices]).map(withAccessPolicy);
+  const registryServices = (publicPortalHints.length ? [] : (selectedRegistryRecord?.services || []))
+    .map((service, index) => normalizeMunicipalityAccessService(service, selectedRegistryRecord, index))
+    .filter(Boolean);
+  const municipalServices = dedupeServices([...environmentRegistry, ...publicPortalHints, ...registryServices, ...embeddedServices]).map(withAccessPolicy);
   const cacheKey = [
     location.provinceKey,
     location.districtKey,
@@ -119,6 +131,11 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
       accessMode: service.accessMode,
       note: service.note,
       authentication: service.authentication || null,
+      authenticationStatus: service.authenticationStatus || null,
+      pageState: service.pageState || null,
+      availabilityStatus: service.availabilityStatus || null,
+      municipalityAccessClass: service.municipalityAccessClass || null,
+      municipalityAccessClassKey: service.municipalityAccessClassKey || null,
       verifiedAt: service.verifiedAt || null,
       documentDate: service.documentDate || null,
       retrievedAt: service.retrievedAt || null,
@@ -194,6 +211,17 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
       publicCatalogUrl: '/data/municipality-official-services.json',
       publicRoutingUrl: '/data/official-source-routing.json'
     },
+    municipalityRegistry: {
+      embedded: true,
+      version: MUNICIPALITY_ACCESS_REGISTRY_VERSION,
+      ...MUNICIPALITY_ACCESS_REGISTRY_STATS,
+      matchedCount: registryRecords.length,
+      selectedAuthority: selectedRegistryRecord ? registryRecordSummary(selectedRegistryRecord) : null,
+      authorityCandidates: registryRecords.slice(0, 8).map(registryRecordSummary),
+      publicRegistryUrl: '/data/municipality-access-registry.json',
+      automaticDataClaim: false,
+      safetyNotice: 'e-Devlet şifresi yalnız turkiye.gov.tr ekranında girilir. Planlamasyon şifre, çerez veya oturum bilgisi istemez ve saklamaz.'
+    },
     resultCapability: automaticConnectorCount > 0
       ? 'automatic-zoning-data'
       : municipalServices[0]?.status === 'manual-only'
@@ -204,6 +232,7 @@ export async function discoverMunicipalityProvider({ parcel, query, env = proces
       authorityLabel,
       automaticConnectorCount,
       embeddedRecords,
+      registryRecords,
       municipalServices
     })
   };
@@ -230,6 +259,29 @@ export function matchEmbeddedCatalog({ province, district, provinceKey = normali
 
 export function embeddedCatalogStats() {
   return { version: MUNICIPALITY_CATALOG_VERSION, ...MUNICIPALITY_CATALOG_STATS };
+}
+
+export function matchMunicipalityAccessRegistry({
+  province,
+  district,
+  neighbourhood,
+  provinceKey = normalize(province),
+  districtKey = normalize(district),
+  neighbourhoodKey = normalize(neighbourhood)
+} = {}) {
+  if (!provinceKey) return [];
+  const candidates = MUNICIPALITY_ACCESS_REGISTRY.filter((record) => {
+    if (normalize(record.province) !== provinceKey) return false;
+    const recordDistrict = normalize(record.district);
+    if (!districtKey) return recordDistrict === '*' || recordDistrict === provinceKey || recordDistrict === 'merkez';
+    return recordDistrict === districtKey || (['merkez', provinceKey].includes(districtKey) && ['*', 'merkez', provinceKey].includes(recordDistrict));
+  });
+  return candidates.sort((a, b) => registryAuthorityPriority(b, { districtKey, neighbourhoodKey }) - registryAuthorityPriority(a, { districtKey, neighbourhoodKey })
+    || String(a.authority || '').localeCompare(String(b.authority || ''), 'tr'));
+}
+
+export function municipalityAccessRegistryStats() {
+  return { version: MUNICIPALITY_ACCESS_REGISTRY_VERSION, ...MUNICIPALITY_ACCESS_REGISTRY_STATS };
 }
 
 export function buildEDevletSearchUrl({ district, province } = {}) {
@@ -284,7 +336,7 @@ async function discoverEDevletService(location, env, fetchImpl) {
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2',
         'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-        'User-Agent': 'Planlamasyon/3.7.0 (https://planlamasyon.truva-ai.com)',
+        'User-Agent': 'Planlamasyon/3.8.0 (https://planlamasyon.truva-ai.com)',
         Referer: 'https://www.turkiye.gov.tr/'
       }
     }, timeoutMs, fetchImpl, clampInt(env.MUNICIPALITY_SOURCE_RETRY_COUNT, 0, 1, 1));
@@ -347,8 +399,6 @@ function nationalCatalogActions() {
     verifiedAt: record.verifiedAt,
     documentDate: record.documentDate || null,
     retrievedAt: record.retrievedAt || null,
-    documentDate: record.documentDate || null,
-    retrievedAt: record.retrievedAt || null,
     catalogRecordId: record.id,
     machineReadableCandidate: Boolean(record.machineReadableCandidate)
   }));
@@ -399,6 +449,35 @@ function normalizeCatalogService(record) {
   };
 }
 
+function normalizeMunicipalityAccessService(service, record, index = 0) {
+  const url = safeHttpsUrl(service?.url);
+  if (!url) return null;
+  return {
+    id: clean(service.id, 160) || `registry-${record.id}-${index + 1}`,
+    catalogRecordId: record.id,
+    status: clean(service.status, 80) || 'official-service-found',
+    accessMode: clean(service.accessMode, 80) || 'official-service',
+    kind: clean(service.kind, 80) || 'municipality-portal',
+    title: clean(service.title, 260) || 'Resmî imar hizmeti',
+    provider: clean(service.provider, 240) || record.authority,
+    url,
+    note: clean(service.note, 900),
+    authentication: clean(service.authentication, 160),
+    authenticationStatus: clean(service.authenticationStatus, 120),
+    pageState: clean(service.pageState, 120),
+    availabilityStatus: clean(service.availabilityStatus, 120),
+    verifiedAt: clean(service.verifiedAt || record.lastCheckedAt, 40),
+    termsUrl: safeHttpsUrl(service.termsUrl || record.termsUrl),
+    machineReadableCandidate: false,
+    automatedQueryAllowed: false,
+    configured: false,
+    authorized: false,
+    municipalityAccessClass: record.accessClass,
+    municipalityAccessClassKey: record.accessClassKey,
+    dataClaim: 'not-read'
+  };
+}
+
 function normalizeRegistryService(record, location, fallbackId = 'registry-service') {
   const url = safeHttpsUrl(record.url || record.serviceUrl);
   if (!url) return null;
@@ -421,13 +500,19 @@ function normalizeRegistryService(record, location, fallbackId = 'registry-servi
     writtenPermissionRequired: record.writtenPermissionRequired === true,
     configured: record.configured === true,
     authorized: record.authorized === true,
-    authorizationReference: clean(record.authorizationReference || record.authorizationId, 160)
+    authorizationReference: clean(record.authorizationReference || record.authorizationId, 160),
+    curatedPortalHint: record.curatedPortalHint === true,
+    environmentOverride: record.environmentOverride === true
   };
 }
 
-function buildProviderMessage({ location, authorityLabel, automaticConnectorCount, embeddedRecords, municipalServices }) {
+function buildProviderMessage({ location, authorityLabel, automaticConnectorCount, embeddedRecords, registryRecords, municipalServices }) {
   if (automaticConnectorCount > 0) return `${authorityLabel} için otomatik imar veri adaptörü yapılandırılmıştır. Gömülü resmî katalog yedek kaynak olarak da kullanılır.`;
   if (municipalServices[0]?.status === 'manual-only') return `${authorityLabel} için resmî imar portalı bulundu; kullanım koşulları nedeniyle sorgu yalnızca kullanıcı tarafından portalda yapılır ve Planlamasyon otomatik form işlemi yapmaz.`;
+  if (registryRecords?.length && !municipalServices.some((item) => item.status === 'official-service-found')) {
+    const selected = registryRecords[0];
+    return `${selected.authority} resmî belediye envanterinde eşleşti; imar hizmetinin erişim durumu henüz doğrulanmadığı için yalnız güvenli resmî arama ve belge yükleme yolu sunulur.`;
+  }
   if (embeddedRecords.length) {
     const loginCount = municipalServices.filter((item) => item.accessMode === 'official-login-service').length;
     return `Gömülü resmî katalogdan ${embeddedRecords.length} hizmet eşleşti${loginCount ? `; ${loginCount} hizmet resmî oturum isteyebilir` : ''}. Bu bağlantılar doğru resmî sorgu yolunu sağlar; otomatik TAKS, emsal ve kat sonucu yalnızca makine-okunabilir veya yapılandırılmış veri kaynağı bulunduğunda oluşturulur.`;
@@ -435,6 +520,44 @@ function buildProviderMessage({ location, authorityLabel, automaticConnectorCoun
   if (municipalServices.some((item) => item.status === 'official-service-found')) return `${location.district} Belediyesi için resmî imar sorgu hizmeti bulundu. Oturum gerektiren sonuç kullanıcı tarafından resmî portalda açılır.`;
   if (location.district) return `${location.district} için e-Plan, TUCBS ve e-Devlet belediye hizmet araması hazırdır; yapılaşma değerleri ancak açık veya yapılandırılmış veri kaynağından alınır.`;
   return 'Türkiye geneli e-Plan, TUCBS ve gömülü resmî belediye hizmetleri kataloğu hazırdır.';
+}
+
+function registryRecordSummary(record = {}) {
+  return {
+    id: record.id || null,
+    institutionCode: record.institutionCode || null,
+    authority: record.authority || null,
+    municipalityName: record.municipalityName || null,
+    municipalityType: record.municipalityType || null,
+    province: record.province || null,
+    district: record.district || null,
+    accessClass: record.accessClass || 'BEKLIYOR',
+    accessClassKey: record.accessClassKey || 'PENDING',
+    authRequired: record.authRequired || 'Bilinmiyor',
+    captcha: record.captcha || 'Bilinmiyor',
+    automationPermission: record.automationPermission || 'Bilinmiyor',
+    confidence: record.confidence || 'İncelenmedi',
+    portalFamily: record.portalFamily || null,
+    serviceCount: Number(record.serviceCount || record.services?.length || 0),
+    lastCheckedAt: record.lastCheckedAt || null,
+    officialSiteUrl: record.officialSiteUrl || null,
+    officialSiteStatus: record.officialSiteStatus || null,
+    termsUrl: record.termsUrl || null,
+    notes: record.notes || null
+  };
+}
+
+function registryAuthorityPriority(record, { districtKey, neighbourhoodKey } = {}) {
+  let score = 0;
+  const municipalityKey = normalize(record.municipalityName);
+  const type = normalize(record.municipalityType);
+  if (neighbourhoodKey && municipalityKey === neighbourhoodKey && type.includes('belde')) score += 1000;
+  if (districtKey && municipalityKey === districtKey) score += 400;
+  if (type.includes('ilce') || type.includes('buyuksehirilce')) score += 300;
+  if (record.accessClassKey === 'A1') score += 50;
+  else if (record.accessClassKey === 'A4') score += 35;
+  score += Math.min(20, Number(record.serviceCount || record.services?.length || 0) * 5);
+  return score;
 }
 
 function parseRegistry(raw) {
@@ -510,6 +633,11 @@ function actionToSource(action) {
     retrievedAt: action.retrievedAt || null,
     freshness: describeSourceFreshness(action),
     authentication: action.authentication || null,
+    authenticationStatus: action.authenticationStatus || null,
+    pageState: action.pageState || null,
+    availabilityStatus: action.availabilityStatus || null,
+    municipalityAccessClass: action.municipalityAccessClass || null,
+    municipalityAccessClassKey: action.municipalityAccessClassKey || null,
     termsUrl: action.termsUrl || null,
     accessMode: action.accessMode || null,
     automatedQueryAllowed: action.automatedQueryAllowed === true,
@@ -535,6 +663,8 @@ function catalogPriority(record) {
 
 function servicePriority(service = {}) {
   let score = 0;
+  if (service.environmentOverride === true) score += 2000;
+  if (service.curatedPortalHint === true) score += 1000;
   if (service.kind === 'configured-adapter') score += 600;
   if (service.accessMode === 'automatic-adapter') score += 550;
   if (service.kind === 'municipality-geodata') score += 500;

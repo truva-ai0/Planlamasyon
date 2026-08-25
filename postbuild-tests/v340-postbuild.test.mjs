@@ -80,15 +80,15 @@ test('v3.5.0 Beşiktaş yönlendirmesi hiçbir otomatik ağ çağrısı yapmaz',
   assert.equal(result.status, 'manual-only');
   assert.equal(service?.automatedQueryAllowed, false);
   assert.equal(service?.writtenPermissionRequired, true);
-  assert.equal(service?.url, 'https://besiktas.bel.tr/');
+  assert.equal(service?.url, 'https://os.besiktas.bel.tr/');
   assert.equal(service?.termsUrl, 'https://keos.besiktas.bel.tr/imardurumu/legal.aspx');
 });
 
-test('v3.7.0 sürüm ve önbellek anahtarları tek sürümdür', async () => {
+test('v3.8.0 sürüm ve önbellek anahtarları tek sürümdür', async () => {
   const html = await readFile('dist/index.html', 'utf8');
   const pkg = JSON.parse(await readFile('package.json', 'utf8'));
-  assert.equal(pkg.version, '3.7.0');
-  assert.match(html, /styles\.css\?v=3\.7\.0/);
-  assert.match(html, /app\.js\?v=3\.7\.0/);
-  assert.match(html, /PLANLAMASYON · v3\.7\.0/);
+  assert.equal(pkg.version, '3.8.0');
+  assert.match(html, /styles\.css\?v=3\.8\.0/);
+  assert.match(html, /app\.js\?v=3\.8\.0/);
+  assert.match(html, /PLANLAMASYON · v3\.8\.0/);
 });

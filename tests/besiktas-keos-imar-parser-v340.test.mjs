@@ -47,7 +47,7 @@ test('Beşiktaş 816/35 gerçek yapı fikstüründen doğrulanabilen alanları o
     evidence: userEvidence
   });
 
-  assert.equal(BESIKTAS_KEOS_IMAR_PARSER_VERSION, '3.7.0');
+  assert.equal(BESIKTAS_KEOS_IMAR_PARSER_VERSION, '3.8.0');
   assert.equal(parsed.status, 'matched');
   assert.equal(parsed.canApply, true);
   assert.deepEqual(parsed.detectedParcel, { block: '816', parcel: '35' });

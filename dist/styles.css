@@ -299,6 +299,21 @@ button,input,select,textarea{font:inherit}
   .field input,.field select,.drawer-form textarea,.local-data-section select{font-size:16px}
   .toast{bottom:calc(14px + env(safe-area-inset-bottom));width:calc(100% - 24px);max-width:none}
 }
+
+/* v3.8.0 — 1.407 belediye erişim kaydı, güvenli resmî portal dönüşü ve belge akışı */
+.query-restore-banner{margin-top:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-color:rgba(77,145,255,.28)}
+.query-restore-banner>div{display:grid;gap:4px}.query-restore-banner strong{font-size:14px}.query-restore-banner small{color:var(--muted);font-size:11px;line-height:1.45}
+.parcel-reference-cell{position:relative}.inline-copy-button{width:max-content;border:1px solid rgba(77,145,255,.28);border-radius:9px;padding:5px 8px;background:rgba(77,145,255,.08);color:var(--blue-soft);font-size:10px;font-weight:800;cursor:pointer}
+.municipality-access-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(210px,.8fr);gap:14px;margin-bottom:14px;padding:15px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}
+.municipality-access-summary>div{display:grid;gap:5px}.municipality-access-summary strong{font-size:13px}.municipality-access-summary small,.municipality-access-summary span{color:var(--muted);font-size:11px;line-height:1.45}
+.municipality-access-summary.is-a1{border-color:rgba(46,196,146,.3)}.municipality-access-summary.is-a4{border-color:rgba(77,145,255,.32)}.municipality-access-summary.is-pending{border-color:rgba(239,182,93,.35)}
+.municipality-access-state{padding-left:14px;border-left:1px solid var(--line)}
+.document-file-summary.is-error{border-color:rgba(255,95,109,.45)!important;background:rgba(255,95,109,.07)!important}.document-file-summary small{display:block;margin-top:5px;color:var(--muted);line-height:1.45}
+@media(max-width:640px){
+  .query-restore-banner{align-items:stretch;flex-direction:column}.query-restore-banner .mini-button{width:100%;min-height:44px}
+  .municipality-access-summary{grid-template-columns:1fr}.municipality-access-state{padding-left:0;padding-top:12px;border-left:0;border-top:1px solid var(--line)}
+  .inline-copy-button{min-height:36px;padding:7px 10px}
+}
 @media(max-width:360px){.local-data-counts{grid-template-columns:1fr}.report-preview-stats{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 @media print{.print-report-alert.is-partial{border-color:#185fbd;background:#eef5ff}.print-report-sheet td,.print-report-sheet dd,.print-source-list{overflow-wrap:anywhere}}

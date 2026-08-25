@@ -1,6 +1,6 @@
 import { normalizeZoningFields } from './analysis-core.mjs';
 
-export const BESIKTAS_KEOS_IMAR_PARSER_VERSION = '3.7.0';
+export const BESIKTAS_KEOS_IMAR_PARSER_VERSION = '3.8.0';
 
 const MAX_HTML_LENGTH = 2_500_000;
 const OFFICIAL_HOST = 'keos.besiktas.bel.tr';

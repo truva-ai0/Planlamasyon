@@ -48,7 +48,7 @@ export async function handler(event, context = {}) {
           planAi: { status: 'unavailable', enabled: true, configured: Boolean(boundedEnv.NVIDIA_API_KEY), canCalculate: false, evidenceBackedFields: [], evidence: [], attempts: [], message: 'Plan AI süre sınırı nedeniyle bu turda tamamlanamadı.' },
           planContext: { status: 'unavailable', matches: [], metadata: {}, records: [], sources: [] },
           providerDiscovery: { status: 'national-portals-ready', actions: [], sources: [], municipalServices: [], catalog: { embedded: true, matchCount: 0 }, message: 'Kaynak keşfi süre sınırına ulaştı; e-Plan bağlantısı manuel olarak kullanılabilir.' },
-          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.7.0', forceRefresh },
+          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.8.0', forceRefresh },
           diagnostics: [{ connector: 'analysis-deadline', message: 'İmar analizi güvenli süre sınırına ulaştı.' }],
           message: 'İmar servislerinden bazıları süre sınırı içinde yanıt vermedi; bulunan kadastro sonucu korunarak eksik alanlar işaretlendi.'
         })
@@ -67,7 +67,7 @@ export async function handler(event, context = {}) {
       status: 'unavailable', categories: [], items: [], message: safeDependencyMessage(environmentResult.reason, 'Yakın çevre verisi güvenli süre sınırı içinde alınamadı.')
     };
     const analysis = buildParcelAnalysis({ parcel, zoning, environment });
-    analysis.version = '3.7.0';
+    analysis.version = '3.8.0';
     analysis.forceRefreshed = forceRefresh;
     analysis.manualOnly = Boolean(zoning?.manualOnly || zoning?.status === 'manual-only');
     analysis.zoning.manualOnly = analysis.manualOnly;

@@ -4,8 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const APP_VERSION = '3.7.0';
-const SOURCE_DIRECTORIES = ['dist', 'netlify/functions', 'functions', 'src'];
+const APP_VERSION = '3.8.0';
+const SOURCE_DIRECTORIES = ['dist', 'netlify/functions', 'functions', 'src', 'scripts'];
 const TEST_DIRECTORIES = ['tests', 'postbuild-tests'];
 
 async function filesIn(directory) {
@@ -27,6 +27,8 @@ const required = [
   'netlify/functions/lib/plan-ai-client.mjs',
   'netlify/functions/lib/zoning-client.mjs',
   'netlify/functions/lib/zoning-document-parser.mjs',
+  'netlify/functions/lib/municipality-access-registry.mjs',
+  'dist/data/municipality-access-registry.json',
   'src/worker.js'
 ];
 for (const path of required) await access(path);
@@ -37,6 +39,9 @@ const index = await readFile('dist/index.html', 'utf8');
 for (const asset of [`styles.css?v=${APP_VERSION}`, `app.js?v=${APP_VERSION}`, `PLANLAMASYON · v${APP_VERSION}`]) {
   if (!index.includes(asset)) throw new Error(`Sürüm izi eksik: ${asset}`);
 }
+const municipalityRegistry = JSON.parse(await readFile('dist/data/municipality-access-registry.json', 'utf8'));
+if (municipalityRegistry.registryVersion !== '2026-08-25-v3.8.0') throw new Error('Belediye erişim kaydı sürümü v3.8.0 değil.');
+if (municipalityRegistry.municipalities?.length !== 1407) throw new Error(`Belediye erişim kaydı eksik: ${municipalityRegistry.municipalities?.length || 0}/1407`);
 
 const sourceFiles = (await Promise.all(SOURCE_DIRECTORIES.map(filesIn)))
   .flat()

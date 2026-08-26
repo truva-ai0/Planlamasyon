@@ -16,6 +16,8 @@ const PARCEL_BASES = [
 ];
 const PROVINCES_STATIC = 'https://parselsorgu.tkgm.gov.tr/app/modules/administrativeQuery/data/ilListe.json';
 const ALLOWED_HOSTS = new Set(['cbsapi.tkgm.gov.tr', 'cbsservis.tkgm.gov.tr', 'parselsorgu.tkgm.gov.tr']);
+const TKGM_MAX_RESPONSE_BYTES = 2_000_000;
+const TKGM_MAX_REDIRECTS = 3;
 const TKGM_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
   'Accept': 'application/json',
@@ -23,7 +25,7 @@ const TKGM_HEADERS = {
   'Origin': 'https://parselsorgu.tkgm.gov.tr'
 };
 
-export async function handleCloudflareTkgm(request, env = {}) {
+export async function handleCloudflareTkgm(request, env = {}, fetchImpl = fetch) {
   if (request.method !== 'GET') return json(405, { ok: false, code: 'METHOD_NOT_ALLOWED', message: 'Yalnızca GET destekleniyor.' }, { Allow: 'GET' });
   const url = new URL(request.url);
   const action = url.searchParams.get('action') || 'status';
@@ -38,14 +40,14 @@ export async function handleCloudflareTkgm(request, env = {}) {
           `${ADMIN_BASES[0]}/idariYapi/ilListe`,
           PROVINCES_STATIC,
           ...ADMIN_BASES.slice(1).map((base) => `${base}/idariYapi/ilListe`)
-        ], env);
+        ], env, {}, fetchImpl);
         data = normalizeAdministrativeCollection(upstream.payload, 'province');
         data.source.bridge = 'cloudflare-native';
         break;
       }
       case 'districts': {
         const provinceId = positiveId(url.searchParams.get('provinceId'), 'provinceId');
-        const upstream = await firstJson(ADMIN_BASES.map((base) => `${base}/idariYapi/ilceListe/${encodeURIComponent(provinceId)}`), env);
+        const upstream = await firstJson(ADMIN_BASES.map((base) => `${base}/idariYapi/ilceListe/${encodeURIComponent(provinceId)}`), env, {}, fetchImpl);
         data = normalizeAdministrativeCollection(upstream.payload, 'district');
         data.source.bridge = 'cloudflare-native';
         break;
@@ -53,7 +55,7 @@ export async function handleCloudflareTkgm(request, env = {}) {
       case 'neighbourhoods':
       case 'neighborhoods': {
         const districtId = positiveId(url.searchParams.get('districtId'), 'districtId');
-        const upstream = await firstJson(ADMIN_BASES.map((base) => `${base}/idariYapi/mahalleListe/${encodeURIComponent(districtId)}`), env);
+        const upstream = await firstJson(ADMIN_BASES.map((base) => `${base}/idariYapi/mahalleListe/${encodeURIComponent(districtId)}`), env, {}, fetchImpl);
         data = normalizeAdministrativeCollection(upstream.payload, 'neighbourhood');
         data.source.bridge = 'cloudflare-native';
         break;
@@ -63,7 +65,7 @@ export async function handleCloudflareTkgm(request, env = {}) {
         const block = parcelPart(url.searchParams.get('block'), 'block');
         const parcel = parcelPart(url.searchParams.get('parcel'), 'parcel');
         const encoded = `${encodeURIComponent(neighbourhoodId)}/${encodeURIComponent(block)}/${encodeURIComponent(parcel)}`;
-        const upstream = await firstJson(PARCEL_BASES.map((base) => `${base}/parsel/${encoded}`), env, { allowNotFound: true });
+        const upstream = await firstJson(PARCEL_BASES.map((base) => `${base}/parsel/${encoded}`), env, { allowNotFound: true }, fetchImpl);
         if (!upstream?.payload) return json(404, { ok: false, code: 'PARCEL_NOT_FOUND', message: 'Bu ada/parsel için TKGM yanıtı bulunamadı.' });
         data = normalizeParcel(upstream.payload, { neighbourhoodId, block, parcel });
         break;
@@ -73,7 +75,7 @@ export async function handleCloudflareTkgm(request, env = {}) {
         const lon = coordinate(url.searchParams.get('lon'), -180, 180, 'lon');
         const encoded = `${encodeURIComponent(lat)}/${encodeURIComponent(lon)}`;
         const candidates = PARCEL_BASES.flatMap((base) => [`${base}/parsel/${encoded}/`, `${base}/parsel/${encoded}`]);
-        const upstream = await firstJson(candidates, env, { allowNotFound: true });
+        const upstream = await firstJson(candidates, env, { allowNotFound: true }, fetchImpl);
         if (!upstream?.payload) return json(404, { ok: false, code: 'PARCEL_NOT_FOUND', message: 'Bu koordinatta TKGM parsel yanıtı bulunamadı.' });
         data = normalizeParcel(upstream.payload, {});
         break;
@@ -94,7 +96,7 @@ export async function handleCloudflareTkgm(request, env = {}) {
   }
 }
 
-async function firstJson(candidates, env, options = {}) {
+async function firstJson(candidates, env, options = {}, fetchImpl = fetch) {
   const attempts = [];
   let sawNotFound = false;
   let lastError = null;
@@ -110,22 +112,21 @@ async function firstJson(candidates, env, options = {}) {
         const timeout = setTimeout(() => controller.abort(), 15000);
         let response;
         try {
-          response = await fetch(target.toString(), {
+          response = await fetchAllowedResponse(target, {
             method: 'GET',
             headers: {
               ...TKGM_HEADERS,
               ...(env.TKGM_BEARER_TOKEN ? { Authorization: `Bearer ${String(env.TKGM_BEARER_TOKEN).trim()}` } : {})
             },
-            redirect: 'follow',
             signal: controller.signal
-          });
+          }, fetchImpl);
         } finally { clearTimeout(timeout); }
         if (options.allowNotFound && (response.status === 404 || response.status === 204)) {
           sawNotFound = true;
           attempts.push({ host: target.hostname, path: target.pathname, status: response.status });
           break;
         }
-        const text = await response.text();
+        const text = await readBoundedResponseText(response, TKGM_MAX_RESPONSE_BYTES);
         attempts.push({ host: target.hostname, path: target.pathname, status: response.status });
         if (!response.ok) {
           if ((response.status === 429 || response.status >= 500) && attempt === 0) { await delay(250); continue; }
@@ -153,6 +154,51 @@ async function firstJson(candidates, env, options = {}) {
   const error = lastError || coded('TKGM açık servislerinden yanıt alınamadı.', 502, 'TKGM_DIRECTORY_UNAVAILABLE');
   error.attempts = attempts;
   throw error;
+}
+
+async function fetchAllowedResponse(initialTarget, init, fetchImpl) {
+  let target = validateTkgmTarget(initialTarget);
+  for (let redirectCount = 0; redirectCount <= TKGM_MAX_REDIRECTS; redirectCount += 1) {
+    const response = await fetchImpl(target.toString(), { ...init, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    try { await response.body?.cancel(); } catch {}
+    if (!location) throw coded('TKGM yönlendirmesinde hedef adres bulunamadı.', 502, 'TKGM_INVALID_REDIRECT');
+    if (redirectCount === TKGM_MAX_REDIRECTS) throw coded('TKGM yönlendirme sınırı aşıldı.', 502, 'TKGM_TOO_MANY_REDIRECTS');
+    target = validateTkgmTarget(new URL(location, target));
+  }
+  throw coded('TKGM yönlendirme sınırı aşıldı.', 502, 'TKGM_TOO_MANY_REDIRECTS');
+}
+
+function validateTkgmTarget(value) {
+  const target = value instanceof URL ? value : new URL(value);
+  if (target.protocol !== 'https:' || !ALLOWED_HOSTS.has(target.hostname) || target.username || target.password || (target.port && target.port !== '443')) {
+    throw coded('TKGM güvenli olmayan bir adrese yönlendirdi.', 502, 'TKGM_UNSAFE_REDIRECT');
+  }
+  return target;
+}
+
+async function readBoundedResponseText(response, maxBytes) {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw coded('TKGM servis yanıtı çok büyük.', 502, 'TKGM_RESPONSE_TOO_LARGE');
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) throw coded('TKGM servis yanıtı çok büyük.', 502, 'TKGM_RESPONSE_TOO_LARGE');
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } catch (error) {
+    try { await reader.cancel(error); } catch {}
+    throw error;
+  }
 }
 
 function positiveId(value, field) {

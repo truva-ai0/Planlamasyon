@@ -9,6 +9,8 @@
 - PDF/JPG/PNG/metin belgesi cihazda okunur; ham dosya sunucuya yüklenmez. Ada/parsel ve belge türü kontrolünden geçen TAKS, KAKS/emsal, kat, Yençok/Hmax, yapı nizamı, net imar alanı, çekme mesafeleri ve belgede açıkça yazan bahçe m² alanları kaynak iziyle taşınır.
 - Eksik, koşullu, çelişkili, eski/taslak, düşük güvenli veya yanlış parsele ait değerlerden hesap üretilmez. Belge tarihi, yetkili idare, alıntı ve güven düzeyi korunur.
 - Cloudflare istek gövdeleri akış sırasında boyutlandırılır; Wrangler 4.125.0 sabitlenmiş, güncel Workers uyumluluk tarihi ve gözlemlenebilirlik ayarı eklenmiştir.
+- TKGM köprüsü yönlendirmeleri her adımda yeniden doğrular; yalnız sabit resmî TKGM alan adlarına gider ve 2 MB sınırını aşan yanıtları belleğe almadan durdurur.
+- Analiz talebi hız sınırı Worker belleğinde tutulmaz; Cloudflare Rate Limiting bağlamasında e-posta adresinin SHA-256 özeti kullanılır ve ham adres sayaç anahtarına yazılmaz.
 
 ## Güvenli e-Devlet yolu
 

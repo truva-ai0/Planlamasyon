@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('/opt/codex/runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.js');
+const targetUrl = new URL(process.env.PLANLAMASYON_VISUAL_URL || 'https://planlamasyon.truvaai0.workers.dev/');
+targetUrl.searchParams.set('visual', 'v380');
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({
@@ -10,7 +12,7 @@ const page = await browser.newPage({
   hasTouch: true
 });
 
-await page.goto('https://planlamasyon.truvaai0.workers.dev/?visual=v328', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+await page.goto(targetUrl.toString(), { waitUntil: 'domcontentloaded', timeout: 30_000 });
 await page.waitForFunction(() => document.querySelector('#provinceSelect')?.options.length > 2, null, { timeout: 30_000 });
 await page.selectOption('#provinceSelect', '56');
 await page.waitForFunction(() => document.querySelector('#districtSelect')?.options.length > 2, null, { timeout: 30_000 });
@@ -23,11 +25,11 @@ await page.click('#parcelSubmit');
 await page.waitForFunction(() => !document.querySelector('#resultSection')?.hidden, null, { timeout: 35_000 });
 await page.waitForTimeout(1800);
 await page.locator('.map-card').scrollIntoViewIfNeeded();
-await page.screenshot({ path: 'mobile-map-v328.png', fullPage: false });
+await page.screenshot({ path: 'mobile-map-v380.png', fullPage: false });
 await page.waitForFunction(() => document.querySelector('#analysisProgress')?.hidden === true, null, { timeout: 75_000 });
 await page.click('#planAiAskButton');
 await page.waitForTimeout(500);
-await page.screenshot({ path: 'mobile-ai-v328.png', fullPage: false });
+await page.screenshot({ path: 'mobile-ai-v380.png', fullPage: false });
 
 const report = await page.evaluate(() => ({
   version: document.body.innerText.includes('v3.8.0'),

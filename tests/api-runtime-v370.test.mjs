@@ -90,3 +90,19 @@ test('v3.7 yalnız başarılı bildirim yanıtında talebi ekibe iletilmiş saya
   assert.equal(body.data.serverStored, false);
   assert.equal(body.data.storage, 'email-notification-only');
 });
+
+test('v3.8 analiz talebi hız sınırında e-posta özetini kullanır ve ham adresi bağlamaya vermez', async () => {
+  let observedKey = '';
+  const response = await handleAnalysisRequest(analysisRequest(validBody), {
+    ANALYSIS_RATE_LIMITER: {
+      async limit({ key }) {
+        observedKey = key;
+        return { success: false };
+      }
+    }
+  });
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).code, 'RATE_LIMITED');
+  assert.match(observedKey, /^analysis:[a-f0-9]{64}$/);
+  assert.doesNotMatch(observedKey, /musteri|example/i);
+});

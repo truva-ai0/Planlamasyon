@@ -2,9 +2,6 @@ import { handleCloudflareTkgm } from './tkgm-cloudflare.js';
 
 const API_BODY_LIMIT_BYTES = 2_000_000;
 const ANALYSIS_REQUEST_BODY_LIMIT_BYTES = 64_000;
-const ANALYSIS_REQUEST_WINDOW_MS = 10 * 60 * 1000;
-const ANALYSIS_REQUEST_MAX_PER_WINDOW = 8;
-const analysisRequestRateStore = new Map();
 
 const CORE = {
   analyze: () => import('../netlify/functions/analyze.mjs'),
@@ -96,10 +93,6 @@ export async function handleAnalysisRequest(request, env = {}, fetchImpl = fetch
   if (!isAllowedOrigin(request, env)) {
     return json(403, { ok: false, code: 'ORIGIN_NOT_ALLOWED', message: 'Bu kaynaktan analiz talebi gönderilemez.' });
   }
-  const clientKey = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-  if (!consumeRateLimit(analysisRequestRateStore, clientKey, ANALYSIS_REQUEST_MAX_PER_WINDOW, ANALYSIS_REQUEST_WINDOW_MS)) {
-    return json(429, { ok: false, code: 'RATE_LIMITED', message: 'Çok fazla talep gönderildi. Lütfen kısa süre sonra yeniden deneyin.' }, { 'Retry-After': '600' });
-  }
   let body;
   try {
     const raw = await readBoundedText(request, ANALYSIS_REQUEST_BODY_LIMIT_BYTES);
@@ -120,6 +113,9 @@ export async function handleAnalysisRequest(request, env = {}, fetchImpl = fetch
   }
   if (!clean(parcel.block, 40) || !clean(parcel.parcel, 40)) {
     return json(400, { ok: false, code: 'PARCEL_REQUIRED', message: 'Ada ve parsel bilgisi gerekli.' });
+  }
+  if (!await consumeAnalysisRateLimit(env, email)) {
+    return json(429, { ok: false, code: 'RATE_LIMITED', message: 'Çok fazla talep gönderildi. Lütfen kısa süre sonra yeniden deneyin.' }, { 'Retry-After': '60' });
   }
 
   const id = `req_${Date.now()}_${crypto.randomUUID().slice(0, 12)}`;
@@ -159,6 +155,7 @@ async function sendNotification(env, record, fetchImpl = fetch) {
       text: `Talep: ${record.id}\nKonum: ${location}\nAda/Parsel: ${clean(p.block, 40)}/${clean(p.parcel, 40)}\nE-posta: ${record.email}\nTarih: ${record.createdAt}`
     })
   });
+  try { await response.body?.cancel(); } catch {}
   return { configured: true, sent: response.ok };
 }
 
@@ -195,23 +192,18 @@ function isAllowedOrigin(request, env = {}) {
   return allowed.includes(origin);
 }
 
-function consumeRateLimit(store, rawKey, max, windowMs) {
-  const now = Date.now();
-  const key = String(rawKey || 'unknown').split(',')[0].trim().slice(0, 180) || 'unknown';
-  const current = store.get(key);
-  if (!current || current.resetAt <= now) {
-    store.set(key, { count: 1, resetAt: now + windowMs });
-    cleanupRateStore(store, now);
+async function consumeAnalysisRateLimit(env, email) {
+  if (!env?.ANALYSIS_RATE_LIMITER?.limit) return true;
+  const bytes = new TextEncoder().encode(String(email || '').trim().toLocaleLowerCase('tr-TR'));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const key = `analysis:${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+  try {
+    const result = await env.ANALYSIS_RATE_LIMITER.limit({ key });
+    return result?.success !== false;
+  } catch (error) {
+    console.warn(JSON.stringify({ event: 'analysis_rate_limit_unavailable', message: String(error?.message || 'unknown') }));
     return true;
   }
-  current.count += 1;
-  return current.count <= max;
-}
-
-function cleanupRateStore(store, now) {
-  if (store.size < 1500) return;
-  for (const [key, value] of store) if (value.resetAt <= now) store.delete(key);
-  while (store.size > 1000) store.delete(store.keys().next().value);
 }
 
 function requestError(message, code) {

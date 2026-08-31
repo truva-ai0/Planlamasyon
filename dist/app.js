@@ -1106,12 +1106,12 @@ function renderPlanAi(planAi = {}) {
 
 function openPlanAiDrawer() {
   if (!state.analysis) {
-    openDrawer('✦ Plan AI · v3.8.0', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
+    openDrawer('✦ Plan AI · v3.8.1', '<div class="drawer-empty"><div><strong>Önce bir parsel sorgulayın.</strong><p>Plan AI, parsel ve resmî kaynak analizi oluştuktan sonra sorularınızı yanıtlar.</p></div></div>');
     return;
   }
   const ai = state.analysis.planAi || {};
   const degraded = Boolean(ai.degraded || ai.configured === false || ['disabled', 'unavailable', 'no-values', 'review-required'].includes(ai.status));
-  openDrawer('✦ Plan AI · v3.8.0', `
+  openDrawer('✦ Plan AI · v3.8.1', `
     <div class="plan-ai-chat">
       <div class="plan-ai-chat-status"><strong>${escapeHtml(degraded ? 'Sınırlı açıklama modu' : 'Plan AI aktif')}</strong><span>${escapeHtml(degraded ? 'Canlı AI yanıt veremezse yalnız mevcut analizde yazan değerler özetlenir; yeni imar değeri tahmin edilmez.' : ai.message || 'Mevcut analiz üzerinden soru sorabilirsiniz.')}</span></div>
       <div class="plan-ai-suggestions">

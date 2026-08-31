@@ -113,7 +113,7 @@ test('v3.6 doğrulanmış net alanla hesaplar; net alan yoksa kadastro fallbacki
     zoning: { status: 'user-evidence', conflict: false, fields: { netParcelArea: 800, taks: 0.25, emsal: 1.5 } },
     environment: { status: 'available', items: [], categories: [] }
   });
-  assert.equal(netAnalysis.version, '3.8.0');
+  assert.equal(netAnalysis.version, '3.8.1');
   assert.equal(netAnalysis.calculationBasis.kind, 'net-imar-parseli-alani');
   assert.equal(netAnalysis.metrics.footprint.value, 200);
   assert.equal(netAnalysis.metrics.construction.value, 1200);

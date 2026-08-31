@@ -1,4 +1,14 @@
-# Planlamasyon v3.8.0 — Türkiye Belediye Envanteri ve Güvenli Resmî Belge Akışı
+# Planlamasyon v3.8.1 — Otomatik Açık Resmî Ada/Parsel Kanıtı
+
+## v3.8.1 yenilikleri
+
+- Belediyenin resmî portalı yalnız elle kullanılabiliyor olsa bile TUCBS/e-Plan açık katmanları ve ada–parseli birebir eşleşen açık resmî kayıtlar artık taranmaya devam eder. Manuel portala otomatik form veya oturum isteği gönderilmez.
+- Açık resmî kayıtlar için genel, genişletilebilir bir eşleştirme şeması eklendi. Kaynak yalnız resmî `gov.tr`/`bel.tr` alanındaysa; il, ilçe, mahalle, ada, parsel ve varsa alan kontrolü geçerse yapılaşma alanları otomatik sonuca taşınır.
+- İstanbul / Arnavutköy / Taşoluk / 6597 ada / 2 parsel için `ilan.gov.tr` üzerindeki birebir eşleşen resmî kayıttan Konut Alanı, Emsal 0,95 ve en fazla 3 kat otomatik gösterilir. TKGM alanı 111 m² olduğunda yaklaşık emsale esas alan 105,45 m² olarak hesaplanır.
+- Açık resmî kayıt belge tarihi veya güncel yürürlük bilgisi vermiyorsa bu belirsizlik kaynak izinde ve uyarılarda korunur. Sonuç ruhsat hakkı gibi sunulmaz; güncel plan ve plan notları için yetkili belediye teyidi istenir.
+- Belge yükleme otomatik açık kaynak bulunamadığında yedek tamamlama yolu olarak korunmuştur.
+
+# Önceki sürüm: Planlamasyon v3.8.0 — Türkiye Belediye Envanteri ve Güvenli Resmî Belge Akışı
 
 ## v3.8.0 yenilikleri
 

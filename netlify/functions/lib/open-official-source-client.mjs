@@ -1,6 +1,10 @@
 import { geometryCenter } from './geo.mjs';
 import { normalizeZoningFields } from './analysis-core.mjs';
 import {
+  matchOpenOfficialZoningRecords,
+  OPEN_OFFICIAL_ZONING_RECORD_VERSION
+} from './open-official-zoning-records.mjs';
+import {
   describeSourceFreshness,
   fetchOfficialResource,
   hostMatchesAllowlist,
@@ -10,7 +14,7 @@ import {
   validatePublicHttpsUrl
 } from './official-source-security.mjs';
 
-export const OPEN_OFFICIAL_SOURCE_VERSION = '3.8.0';
+export const OPEN_OFFICIAL_SOURCE_VERSION = '3.8.1';
 
 const CACHE = globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ || new Map();
 globalThis.__PLANLAMASYON_OPEN_OFFICIAL_SOURCE_CACHE__ = CACHE;
@@ -83,8 +87,18 @@ export async function discoverOpenOfficialZoning({
 
   const location = resolveLocation(parcel, query);
   const candidates = buildCandidateQueue({ providerDiscovery, env, location });
+  const officialRecordMatches = matchOpenOfficialZoningRecords({
+    parcel,
+    query,
+    configuredRecords: env.OPEN_OFFICIAL_ZONING_RECORDS_JSON
+  });
   const cacheDisabled = String(env.OPEN_OFFICIAL_SOURCE_CACHE_DISABLED ?? 'false').toLowerCase() === 'true';
-  const cacheKey = `${location.provinceKey}:${location.districtKey}:${center.lat.toFixed(5)}:${center.lon.toFixed(5)}:${candidates.map((item) => `${item.id}:${item.accessMode || ''}:${item.automatedQueryAllowed === true ? 1 : 0}:${item.authorized === true ? 1 : 0}`).join('|')}`;
+  const parcelIdentity = [
+    parcel?.properties?.neighbourhoodId || location.neighbourhoodKey,
+    parcel?.properties?.block || query?.block,
+    parcel?.properties?.parcel || query?.parcel
+  ].map((value) => String(value || '').trim()).join(':');
+  const cacheKey = `${location.provinceKey}:${location.districtKey}:${parcelIdentity}:${center.lat.toFixed(5)}:${center.lon.toFixed(5)}:${candidates.map((item) => `${item.id}:${item.accessMode || ''}:${item.automatedQueryAllowed === true ? 1 : 0}:${item.authorized === true ? 1 : 0}`).join('|')}`;
   if (!cacheDisabled) {
     const cached = CACHE.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -93,9 +107,26 @@ export async function discoverOpenOfficialZoning({
   const maxCandidates = clampInt(env.OPEN_OFFICIAL_SOURCE_MAX_CANDIDATES, 4, 40, 12);
   const queue = candidates.slice(0, maxCandidates);
   const seen = new Set(queue.map(candidateKey));
-  const attempts = [];
-  const records = [];
-  const sources = [];
+  const attempts = officialRecordMatches.map((record) => ({
+    id: record.source.id,
+    title: record.source.title,
+    provider: record.source.provider,
+    kind: 'official-record',
+    url: record.source.url,
+    status: 'found',
+    message: record.message,
+    durationMs: 0,
+    foundFields: fieldNames(record.fields),
+    accessMode: record.source.accessMode,
+    automatedQueryAllowed: true,
+    termsUrl: null,
+    sourceClass: record.source.sourceClass,
+    dataClaim: record.source.dataClaim,
+    freshness: record.source.freshness,
+    recordVersion: OPEN_OFFICIAL_ZONING_RECORD_VERSION
+  }));
+  const records = [...officialRecordMatches];
+  const sources = officialRecordMatches.map((record) => record.source);
   const aiEvidence = [];
   const diagnostics = [];
   const discoveredServices = [];
@@ -233,7 +264,7 @@ export async function discoverOpenOfficialZoning({
     budgetLimited,
     totalBudgetMs,
     elapsedMs: Date.now() - scanStartedAt,
-    totalCandidateCount: queue.length,
+    totalCandidateCount: queue.length + officialRecordMatches.length,
     attemptedCount: attempts.length,
     reachableCount: reachedSources,
     manualOnlyCount,
@@ -796,7 +827,7 @@ function portalHeaders(referer, cookieHeader = '') {
   return {
     Accept: 'text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.2',
     'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.5',
-    'User-Agent': 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com)',
+    'User-Agent': 'Planlamasyon/3.8.1 (+https://planlamasyon.truva-ai.com)',
     Referer: referer,
     Origin: url.origin,
     ...(cookieHeader ? { Cookie: cookieHeader } : {})
@@ -1391,7 +1422,7 @@ async function fetchWithTimeout(url, options, timeoutMs, fetchImpl) {
   });
 }
 function standardHeaders(accept) {
-  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.8.0 (+https://planlamasyon.truva-ai.com)' };
+  return { Accept: accept, 'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.4', 'User-Agent': 'Planlamasyon/3.8.1 (+https://planlamasyon.truva-ai.com)' };
 }
 function withQuery(value, params) {
   const url = new URL(allowedPublicUrl(value));

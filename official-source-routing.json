@@ -1,6 +1,6 @@
 {
   "version": "2026-08-25",
-  "releaseVersion": "3.8.0",
+  "releaseVersion": "3.8.1",
   "schemaVersion": 2,
   "country": "Türkiye",
   "coverage": {
@@ -9,7 +9,8 @@
     "directCatalogRecordCount": 117,
     "directCatalogProvinceCount": 29,
     "directCatalogDistrictPairCount": 94,
-    "automaticDataClaim": false,
+    "automaticDataClaim": true,
+    "automaticDataClaimRule": "Yalnız açık resmî makine-okunabilir katman, tam ada/parsel eşleşmeli doğrulanmış resmî kayıt veya hem authorized hem automatedQueryAllowed işaretli adaptör",
     "automaticPortalReadRule": "Yalnız açık salt-okunur sonuç veya hem authorized hem automatedQueryAllowed işaretli adaptör"
   },
   "accessClasses": {
@@ -18,6 +19,12 @@
       "automaticRead": true,
       "userLoginRequired": false,
       "claimRule": "Yalnız dönen kayıt sorgudaki parsel ile doğrulanırsa veri olarak kullanılabilir."
+    },
+    "open-official-record": {
+      "label": "Ada/parsel ile birebir eşleşen açık resmî kayıt",
+      "automaticRead": true,
+      "userLoginRequired": false,
+      "claimRule": "Yalnız resmî gov.tr/bel.tr kaynağı, tam il/ilçe/ada/parsel eşleşmesi ve varsa alan kontrolü geçerse kullanılır; belge tarihi bilinmiyorsa güncellik belirsiz kalır."
     },
     "authorized-adapter": {
       "label": "Yazılı izinli veya yapılandırılmış resmî adaptör",
@@ -66,7 +73,7 @@
       "Google bağlantısı yalnız resmî alan adlarında keşif aramasıdır; sonuç doğrulanmadan resmî kaynak veya veri sayılmaz."
     ],
     "automaticData": [
-      "Yalnız açık lisansı doğrulanmış TUCBS katmanları veya açıkça yetkilendirilmiş kurum adaptörleri otomatik veri adayıdır.",
+      "Yalnız açık lisansı doğrulanmış TUCBS katmanları, ada/parsel ile birebir eşleşen doğrulanmış açık resmî kayıtlar veya açıkça yetkilendirilmiş kurum adaptörleri otomatik veri adayıdır.",
       "Ticari kadastro veri kullanımı için TAKPAS sözleşmesi ve ilgili kurum izinleri gerekir."
     ],
     "security": [

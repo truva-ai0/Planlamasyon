@@ -1,0 +1,77 @@
+name: Apply and verify Planlamasyon v3.8.1
+
+on:
+  push:
+    branches:
+      - automation/planlamasyon-v3.8.1
+    paths:
+      - '.planlamasyon-v381.patch.*'
+      - '.github/workflows/apply-v381.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: planlamasyon-v381-apply
+  cancel-in-progress: false
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Kaynağı al
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: v3.8.1 yamasını doğrula ve uygula
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .planlamasyon-v381.patch.000 .planlamasyon-v381.patch.001 .planlamasyon-v381.patch.002 > /tmp/planlamasyon-v381.patch.gz.b64
+          base64 --decode /tmp/planlamasyon-v381.patch.gz.b64 > /tmp/planlamasyon-v381.patch.gz
+          echo '934d605a5fda72f49a97c4a5133a07d7f8e1e5c8d51793d0f527d78a2ce2ecb2  /tmp/planlamasyon-v381.patch.gz' | sha256sum --check --strict
+          gzip -dc /tmp/planlamasyon-v381.patch.gz > /tmp/planlamasyon-v381.patch
+          git apply --check /tmp/planlamasyon-v381.patch
+          git apply /tmp/planlamasyon-v381.patch
+          test "$(node -p "require('./package.json').version")" = '3.8.1'
+          test -f V3.8.1-TEST-VE-TESLIM-RAPORU.md
+          test -f netlify/functions/lib/open-official-zoning-records.mjs
+          test -f tests/open-official-records-v381.test.mjs
+
+      - name: Node.js kur
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Bağımlılıkları temiz kur
+        run: npm ci
+
+      - name: Sözdizimi ve güvenlik kontrolleri
+        run: npm run check
+
+      - name: Tam regresyon testleri
+        run: npm test
+
+      - name: Üretim build doğrulaması
+        run: npm run build
+
+      - name: Cloudflare Worker kuru dağıtımı
+        run: npm run deploy:dry-run
+
+      - name: Doğrulanan v3.8.1 kaynaklarını dala işle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules .wrangler-dry-run
+          rm -f .planlamasyon-v381.patch.* .planlamasyon-v381.bundle.*
+          rm -f .github/workflows/apply-v381.yml
+          git config user.name 'Planlamasyon Automation'
+          git config user.email 'automation@truva-ai.com'
+          git add -A
+          git status --short
+          git commit -m 'feat: Planlamasyon v3.8.1 otomatik resmi kayıt eşleştirme'
+          git push origin "HEAD:${GITHUB_REF_NAME}"

@@ -187,13 +187,8 @@ test('kullanıcı kaynağı ve açık onay olmadan HTML ayrıştırılmaz', asyn
   }
 });
 
-test('Beşiktaş manual-only akışı korumalı portala istek atmadan hızlı yönlendirme döndürür', async (t) => {
-  const zoningSource = await readFile(new URL('../netlify/functions/lib/zoning-client.mjs', import.meta.url), 'utf8');
-  if (!zoningSource.includes('manualOnlySourceScan')) {
-    t.skip('Bu sözleşme v3.4 postbuild yükseltmesinden sonra doğrulanır.');
-    return;
-  }
-  let networkCalls = 0;
+test('Beşiktaş manual-only portalı korunurken diğer açık ulusal kaynaklar taranmaya devam eder', async () => {
+  const calledUrls = [];
   const parcel = {
     type: 'Feature',
     geometry: { type: 'Polygon', coordinates: [[[28.99917, 41.04842], [28.99943, 41.04822], [28.99949, 41.04831], [28.99917, 41.04842]]] },
@@ -210,17 +205,19 @@ test('Beşiktaş manual-only akışı korumalı portala istek atmadan hızlı y�
       OPEN_OFFICIAL_SOURCE_CACHE_DISABLED: 'true',
       PLAN_AI_AUTO_ENABLED: 'false'
     },
-    fetchImpl: async () => {
-      networkCalls += 1;
-      throw new Error('Manual-only akışında ağ çağrısı yapılmamalı.');
+    fetchImpl: async (url) => {
+      calledUrls.push(String(url));
+      return new Response('', { status: 404 });
     }
   });
 
-  assert.equal(networkCalls, 0);
+  assert.ok(calledUrls.length > 0, 'ulusal açık kaynaklar denenmeli');
+  assert.equal(calledUrls.some((url) => /besiktas\.bel\.tr|os\.besiktas\.bel\.tr|keos\.besiktas\.bel\.tr/i.test(url)), false, 'korumalı belediye portalına istek atılmamalı');
+  assert.ok(calledUrls.every((url) => /csb\.gov\.tr|tucbs\.gov\.tr/i.test(url)), 'yalnız açık ulusal resmî kaynaklar çağrılmalı');
   assert.equal(result.status, 'manual-only');
   assert.equal(result.providerDiscovery.municipalService.id, 'istanbul-besiktas-imar-durumu');
   assert.equal(result.sourceScan.status, 'manual-only');
-  assert.equal(result.sourceScan.attemptedCount, 1);
-  assert.equal(result.sourceScan.attempts[0].status, 'manual-only');
+  assert.ok(result.sourceScan.attemptedCount >= 5);
+  assert.ok(result.sourceScan.attempts.some((attempt) => attempt.status === 'manual-only'));
   assert.match(result.planAi.message, /otomatik beklenmedi/i);
 });

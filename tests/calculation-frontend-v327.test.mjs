@@ -127,5 +127,5 @@ test('mobil arayüzde gerçek yeniden tarama ve Plan AI sınırlı-mod akışı 
   assert.match(app, /Sınırlı mod ·/);
   assert.match(app, /state\.analysisAbort !== controller/);
   assert.match(styles, /source-scan-actions/);
-  assert.match(index, /v3\.8\.0/);
+  assert.match(index, /v3\.8\.1/);
 });

@@ -286,7 +286,7 @@ test('v3.7 resmî kaynak manifesti ağ ve güncellik politikalarını istemci ko
   const primary = JSON.parse(await readFile(new URL('../official-source-routing.json', import.meta.url), 'utf8'));
   const published = JSON.parse(await readFile(new URL('../dist/data/official-source-routing.json', import.meta.url), 'utf8'));
   assert.deepEqual(published, primary);
-  assert.equal(primary.releaseVersion, '3.8.0');
+  assert.equal(primary.releaseVersion, '3.8.1');
   assert.equal(primary.networkGuards.redirectMode, 'manual-same-origin');
   assert.equal(primary.networkGuards.maxSafeRetries, 1);
   assert.equal(primary.networkGuards.postRetries, 0);

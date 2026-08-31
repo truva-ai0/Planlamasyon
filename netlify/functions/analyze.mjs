@@ -48,7 +48,7 @@ export async function handler(event, context = {}) {
           planAi: { status: 'unavailable', enabled: true, configured: Boolean(boundedEnv.NVIDIA_API_KEY), canCalculate: false, evidenceBackedFields: [], evidence: [], attempts: [], message: 'Plan AI süre sınırı nedeniyle bu turda tamamlanamadı.' },
           planContext: { status: 'unavailable', matches: [], metadata: {}, records: [], sources: [] },
           providerDiscovery: { status: 'national-portals-ready', actions: [], sources: [], municipalServices: [], catalog: { embedded: true, matchCount: 0 }, message: 'Kaynak keşfi süre sınırına ulaştı; e-Plan bağlantısı manuel olarak kullanılabilir.' },
-          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.8.0', forceRefresh },
+          configuration: { boundedAnalysis: true, boundedAnalysisVersion: '3.8.1', forceRefresh },
           diagnostics: [{ connector: 'analysis-deadline', message: 'İmar analizi güvenli süre sınırına ulaştı.' }],
           message: 'İmar servislerinden bazıları süre sınırı içinde yanıt vermedi; bulunan kadastro sonucu korunarak eksik alanlar işaretlendi.'
         })
@@ -67,7 +67,7 @@ export async function handler(event, context = {}) {
       status: 'unavailable', categories: [], items: [], message: safeDependencyMessage(environmentResult.reason, 'Yakın çevre verisi güvenli süre sınırı içinde alınamadı.')
     };
     const analysis = buildParcelAnalysis({ parcel, zoning, environment });
-    analysis.version = '3.8.0';
+    analysis.version = '3.8.1';
     analysis.forceRefreshed = forceRefresh;
     analysis.manualOnly = Boolean(zoning?.manualOnly || zoning?.status === 'manual-only');
     analysis.zoning.manualOnly = analysis.manualOnly;
@@ -134,7 +134,9 @@ function publicProvenance(source = {}) {
     confidence: clean(source.confidence || source.extractionConfidence, 40), excerpt: clean(source.excerpt, 520),
     method: clean(source.method, 80), parserVersion: clean(source.parserVersion, 40),
     parcelMatchStatus: clean(source.parcelMatchStatus, 40), accessMode: clean(source.accessMode, 80),
-    automationPolicy: clean(source.automationPolicy, 80), dataClaim: clean(source.dataClaim, 80)
+    automationPolicy: clean(source.automationPolicy, 80), dataClaim: clean(source.dataClaim, 80),
+    currentness: clean(source.currentness, 40),
+    freshness: source.freshness && typeof source.freshness === 'object' ? source.freshness : null
   };
 }
 

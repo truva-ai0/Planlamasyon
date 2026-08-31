@@ -89,7 +89,7 @@ export function buildParcelAnalysis({ parcel, zoning, environment }) {
         : 'cadastral-only';
 
   return {
-    version: '3.8.0',
+    version: '3.8.1',
     status,
     zoningStatus,
     calculatedAt: new Date().toISOString(),
@@ -224,6 +224,10 @@ function buildExplanation({ properties, parcelArea, zoning, fields, metrics, mis
   if (missing.length) sentences.push(`Şu bilgiler henüz doğrulanamadı: ${missing.map(humanField).join(', ')}.`);
   if (zoning.status === 'user-evidence') sentences.push('Bu bölüm kullanıcı tarafından girilen resmî belge bilgilerine dayanır; bağlayıcı işlem öncesinde yetkili idareden teyit edilmelidir.');
   if (zoning.status === 'ai-assisted-official') sentences.push('Bu bölüm Plan AI tarafından e-Devlet girişi istemeyen açık resmî kaynaklardan kanıtıyla çıkarılan değerlere dayanır; bağlayıcı işlem öncesinde yetkili idare kaydı esas alınır.');
+  const openOfficialRecord = zoning?.sources?.find((source) => source?.sourceClass === 'open-official-record');
+  if (openOfficialRecord) {
+    sentences.push(`Bu değerler ada/parsel ile birebir eşleşen açık resmî kayıttan otomatik alınmıştır${openOfficialRecord.documentDate ? `; kaynak tarihi ${openOfficialRecord.documentDate}` : '; kaynak belge tarihi açıkça doğrulanamadı'}. Güncel yürürlük ruhsat işleminden önce yetkili belediyeden teyit edilmelidir.`);
+  }
   return sentences.join(' ');
 }
 
@@ -263,6 +267,16 @@ function buildWarnings({ zoning, fields, missing, environment, calculationBasis 
   if (zoning?.status === 'ai-assisted-official') {
     const ai = zoning?.planAi || {};
     warnings.push({ level: 'info', text: `Plan AI ${Number(ai.evidenceCount || 0)} açık resmî içerik okudu ve yalnızca kaynak alıntısıyla desteklenen ${Number(ai.evidenceBackedFields?.length || 0)} alanı kullandı. Sonuç resmî ruhsat belgesi yerine geçmez.` });
+  }
+  const openOfficialRecord = zoning?.sources?.find((source) => source?.sourceClass === 'open-official-record');
+  if (zoning?.status === 'verified' && openOfficialRecord) {
+    const dateText = openOfficialRecord.documentDate
+      ? `Kaynak belge tarihi ${openOfficialRecord.documentDate}.`
+      : 'Kaynak belge tarihi açıkça doğrulanamadı.';
+    warnings.push({
+      level: 'warning',
+      text: `Yapılaşma değerleri ada/parsel ile birebir eşleşen açık resmî kayıttan otomatik alındı. ${dateText} Güncel plan, plan notları ve ruhsat koşulları yetkili belediyeden teyit edilmelidir.`
+    });
   }
   if (fields.parkingRequired === true) warnings.push({ level: 'warning', text: 'Otopark çözümü proje ve ruhsat aşamasında sağlanmalıdır.' });
   if (fields.roadDedicationPossible === true) warnings.push({ level: 'warning', text: 'Parselde yol veya kamu alanı terki ihtimali işaretlenmiştir; net alan hesabı için imar uygulaması kontrol edilmelidir.' });

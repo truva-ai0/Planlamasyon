@@ -1,13 +1,17 @@
 import { embeddedCatalogStats } from './lib/municipality-provider.mjs';
 import { EMBEDDED_PUBLIC_PLAN_RECORDS, PUBLIC_PLAN_RECORD_VERSION } from './lib/plan-record-client.mjs';
 import { OPEN_OFFICIAL_SOURCE_VERSION } from './lib/open-official-source-client.mjs';
+import {
+  EMBEDDED_OPEN_OFFICIAL_ZONING_RECORDS,
+  OPEN_OFFICIAL_ZONING_RECORD_VERSION
+} from './lib/open-official-zoning-records.mjs';
 import { PLAN_AI_MODEL, PLAN_AI_VERSION } from './lib/plan-ai-client.mjs';
 import { runtimeEnv, runtimePlatform } from './lib/runtime-env.mjs';
 
 export async function handler(event, context = {}) {
   const env = runtimeEnv(context);
   const platform = runtimePlatform(context);
-  const automaticZoningConfigured = Boolean(
+  const automaticZoningConfigured = EMBEDDED_OPEN_OFFICIAL_ZONING_RECORDS.length > 0 || Boolean(
     env.PLANLAMASYON_ZONING_API_URL ||
     env.EPLAN_ADAPTER_URL ||
     env.VERIFIED_ZONING_JSON ||
@@ -30,7 +34,7 @@ export async function handler(event, context = {}) {
     },
     body: JSON.stringify({
       ok: true,
-      app: 'planlamasyon-v3.8.0',
+      app: 'planlamasyon-v3.8.1',
       runtime: platform,
       modules: {
         tkgm: true,
@@ -56,7 +60,9 @@ export async function handler(event, context = {}) {
         openOfficialSourceScan: true,
         openOfficialSourceScanVersion: OPEN_OFFICIAL_SOURCE_VERSION,
         openOfficialSourceScanApi: '/api/open-source-scan',
-        openOfficialSourceTypes: ['wms', 'wfs', 'arcgis', 'json', 'read-only-result', 'authorized-portal-adapter'],
+        openOfficialSourceTypes: ['wms', 'wfs', 'arcgis', 'json', 'read-only-result', 'official-record', 'authorized-portal-adapter'],
+        openOfficialZoningRecordVersion: OPEN_OFFICIAL_ZONING_RECORD_VERSION,
+        embeddedOpenOfficialZoningRecords: EMBEDDED_OPEN_OFFICIAL_ZONING_RECORDS.length,
         manualOnlyPortalPolicy: true,
         eDevletFreeSourcePriority: true,
         documentUploadFallbackOnly: true,

@@ -163,20 +163,14 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   }
 
   const providerDiscovery = await providerDiscoveryPromise;
-  const primaryMunicipalService = providerDiscovery?.municipalService || providerDiscovery?.municipalServices?.[0] || null;
-  const primaryRequiresManualUse = providerDiscovery?.status === 'manual-only'
-    || primaryMunicipalService?.status === 'manual-only'
-    || primaryMunicipalService?.accessMode === 'manual-only';
-  const manualOnlyWithoutConnector = primaryRequiresManualUse
-    && Number(providerDiscovery?.automaticConnectorCount || 0) === 0
-    && !(providerDiscovery?.actions || []).some((item) => item?.automatedQueryAllowed === true || item?.accessMode === 'automatic-adapter');
-  const openSourceScanPromise = manualOnlyWithoutConnector
-    ? Promise.resolve(manualOnlySourceScan(providerDiscovery))
-    : settleWithin(
-      discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
-      7_000,
-      () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
-    );
+  // Belediyenin kendi portalı manuel olsa bile ulusal açık katmanlar ve tam
+  // ada/parsel eşleşmeli açık resmî kayıtlar taranmaya devam eder. Manuel portalın
+  // kendisine otomatik istek/form gönderilmez; yalnız diğer izinli kaynaklar okunur.
+  const openSourceScanPromise = settleWithin(
+    discoverOpenOfficialZoning({ parcel, query, providerDiscovery, env: fastEnv, fetchImpl }),
+    7_000,
+    () => incompleteSourceScan('Açık resmî kaynak taraması süre sınırına ulaştı; bulunan diğer bilgiler gösteriliyor.')
+  );
   const [basePlanContext, publicPlanRecords, openSourceScan] = await Promise.all([
     planContextPromise,
     publicPlanRecordsPromise,
@@ -217,6 +211,8 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   configuration.openOfficialSourceReachableCount = Number(openSourceScan?.reachableCount || 0);
   configuration.openOfficialSourceFoundRecordCount = Number(openSourceScan?.foundRecordCount || 0);
   configuration.openOfficialSourceFoundFieldCount = Number(openSourceScan?.foundFieldCount || 0);
+  configuration.automaticZoningConfigured = configuration.automaticZoningConfigured
+    || Number(openSourceScan?.foundRecordCount || 0) > 0;
 
   const planAi = planAiResult || unavailablePlanAi(fastEnv, 'Plan AI sonucu alınamadı.');
   if (planAi?.record) records.push(planAi.record);
@@ -228,7 +224,7 @@ export async function resolveZoning({ parcel, query, evidence, env = process.env
   configuration.planAiEvidenceCount = Number(planAi?.evidenceCount || 0);
   configuration.planAiEvidenceBackedFieldCount = Number(planAi?.evidenceBackedFields?.length || 0);
   configuration.boundedAnalysis = true;
-  configuration.boundedAnalysisVersion = '3.8.0';
+  configuration.boundedAnalysisVersion = '3.8.1';
 
   const publicPlanRecord = buildPublicPlanMetadataRecord(planContext);
   if (publicPlanRecord) records.push(publicPlanRecord);
@@ -808,6 +804,8 @@ function publicFieldSource(source = {}, field = '') {
     accessMode: clean(source.accessMode, 80),
     automationPolicy: clean(source.automationPolicy, 80),
     dataClaim: clean(source.dataClaim, 80),
+    currentness: clean(source.currentness, 40),
+    freshness: source.freshness && typeof source.freshness === 'object' ? source.freshness : null,
     retrievalMode: clean(source.retrievalMode, 80),
     scanVersion: clean(source.scanVersion, 40)
   };

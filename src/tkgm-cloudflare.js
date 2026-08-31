@@ -33,7 +33,7 @@ export async function handleCloudflareTkgm(request, env = {}, fetchImpl = fetch)
     let data;
     switch (action) {
       case 'status':
-        data = { enabled: true, mode: 'public-information', officialTransactionSuitable: false, bridge: 'cloudflare-native-v3.8.0' };
+        data = { enabled: true, mode: 'public-information', officialTransactionSuitable: false, bridge: 'cloudflare-native-v3.8.1' };
         break;
       case 'provinces': {
         const upstream = await firstJson([

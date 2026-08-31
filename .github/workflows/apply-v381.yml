@@ -51,8 +51,32 @@ jobs:
       - name: Node.js kur
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
+
+      - name: Node.js üretim tabanını 22+ olarak sabitle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          packageJson.engines = { ...(packageJson.engines || {}), node: '>=22' };
+          fs.writeFileSync('package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          if (!packageLock.packages || !packageLock.packages['']) {
+            throw new Error('package-lock.json kök paket kaydı bulunamadı.');
+          }
+          packageLock.packages[''].engines = {
+            ...(packageLock.packages[''].engines || {}),
+            node: '>=22'
+          };
+          fs.writeFileSync('package-lock.json', `${JSON.stringify(packageLock, null, 2)}\n`);
+          NODE
+          test "$(node -p "require('./package.json').engines.node")" = '>=22'
+          test "$(node -p "require('./package-lock.json').packages[''].engines.node")" = '>=22'
 
       - name: Bağımlılıkları temiz kur
         run: npm ci

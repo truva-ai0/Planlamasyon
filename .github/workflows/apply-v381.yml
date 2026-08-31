@@ -7,6 +7,12 @@ on:
     paths:
       - '.planlamasyon-v381.patch.*'
       - '.github/workflows/apply-v381.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.planlamasyon-v381.patch.*'
+      - '.github/workflows/apply-v381.yml'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +30,7 @@ jobs:
       - name: Kaynağı al
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - name: v3.8.1 yamasını doğrula ve uygula
@@ -64,6 +71,8 @@ jobs:
 
       - name: Doğrulanan v3.8.1 kaynaklarını dala işle
         shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           rm -rf node_modules .wrangler-dry-run
@@ -74,4 +83,4 @@ jobs:
           git add -A
           git status --short
           git commit -m 'feat: Planlamasyon v3.8.1 otomatik resmi kayıt eşleştirme'
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"

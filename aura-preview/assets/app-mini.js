@@ -1,21 +1,54 @@
-  (()=>{
-    const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-    const canvas=$('#sequence'), ctx=canvas.getContext('2d',{alpha:false}), img=new Image();
-    const FRAMES=12,COLS=4,ROWS=3,FW=360,FH=203; let ready=false,target=0,current=0,last=-1;
-    const cinematic=$('.cinematic'),stage=$('#stage'),shade=$('#shade'),progress=$('#progress');
-    const cover=(context,frame,w,h)=>{const col=frame%COLS,row=Math.floor(frame/COLS),scale=Math.max(w/FW,h/FH),dw=FW*scale,dh=FH*scale,dx=(w-dw)/2,dy=(h-dh)/2;context.drawImage(img,col*FW,row*FH,FW,FH,dx,dy,dw,dh)};
-    function resize(){const d=Math.min(devicePixelRatio||1,1.55),w=Math.round(innerWidth*d),h=Math.round(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;last=-1}}
-    function draw(v){if(!ready)return;const lo=Math.floor(v),hi=Math.min(FRAMES-1,lo+1),mix=v-lo;if(Math.abs(v-last)<.012)return;ctx.globalAlpha=1;ctx.fillStyle='#080706';ctx.fillRect(0,0,canvas.width,canvas.height);cover(ctx,lo,canvas.width,canvas.height);if(hi!==lo&&mix>.02){ctx.globalAlpha=mix;cover(ctx,hi,canvas.width,canvas.height);ctx.globalAlpha=1}last=v}
-    function drawThumbs(){if(!ready)return;$$('.thumb').forEach(c=>{const d=Math.min(devicePixelRatio||1,1.4),rect=c.getBoundingClientRect();c.width=Math.max(1,Math.round(rect.width*d));c.height=Math.max(1,Math.round(rect.height*d));const x=c.getContext('2d');x.fillStyle='#111';x.fillRect(0,0,c.width,c.height);cover(x,Number(c.dataset.frame)||0,c.width,c.height)})}
-    function onScroll(){const max=Math.max(1,cinematic.offsetHeight-innerHeight),y=Math.min(max,Math.max(0,scrollY-cinematic.offsetTop)),p=y/max;target=p*(FRAMES-1);progress.style.height=(p*100)+'%';document.body.classList.toggle('light',p>.61);$('#header').classList.toggle('scrolled',scrollY>20);stage.style.opacity=scrollY>cinematic.offsetTop+cinematic.offsetHeight-innerHeight*.12?'0':'1';shade.style.opacity=p>.62?'.12':'1';$$('.reveal').forEach(el=>{const r=el.getBoundingClientRect();if(r.top<innerHeight*.84&&r.bottom>0)el.classList.add('show')})}
-    function tick(){current+=(target-current)*.13;draw(current);requestAnimationFrame(tick)}
-    img.onload=()=>{ready=true;resize();draw(0);drawThumbs();setTimeout(()=>$('#loader').classList.add('done'),280)};img.onerror=()=>$('#loader').classList.add('done');img.src=window.AURA_SPRITE_URL||'';
-    addEventListener('resize',()=>{resize();drawThumbs()});addEventListener('scroll',onScroll,{passive:true});onScroll();requestAnimationFrame(tick);
-    const cart=[]; let selected={size:'50 ml',price:1490}; const fmt=n=>'₺'+n.toLocaleString('tr-TR');
-    $$('.size').forEach(b=>b.onclick=()=>{$$('.size').forEach(x=>x.classList.remove('active'));b.classList.add('active');selected={size:b.dataset.size,price:+b.dataset.price};$('#mainPrice').textContent=fmt(selected.price)});
-    const drawer=$('#drawer'),overlay=$('#overlay');function openCart(){drawer.classList.add('open');overlay.classList.add('open');document.body.style.overflow='hidden'}function closeCart(){drawer.classList.remove('open');overlay.classList.remove('open');document.body.style.overflow=''}
-    $$('[data-open-cart]').forEach(b=>b.onclick=openCart);$('#closeCart').onclick=closeCart;overlay.onclick=closeCart;
-    function renderCart(){const lines=$('#cartLines');$$('[data-count]').forEach(x=>x.textContent=cart.length);if(!cart.length)lines.innerHTML='<p class="empty">Sepetiniz henüz boş.</p>';else lines.innerHTML=cart.map((x,i)=>`<div class="cart-item"><div class="cart-pic"></div><div><h4>${x.name}</h4><small>${x.size}</small><div>${fmt(x.price)}</div></div><button class="remove" data-remove="${i}">×</button></div>`).join('');const total=cart.reduce((s,x)=>s+x.price,0);$('#subtotal').textContent=fmt(total);$$('[data-remove]').forEach(b=>b.onclick=()=>{cart.splice(+b.dataset.remove,1);renderCart()});const msg=cart.length?'Merhaba, şu ürünleri sipariş vermek istiyorum:\n'+cart.map(x=>`• ${x.name} / ${x.size} — ${fmt(x.price)}`).join('\n')+`\nToplam: ${fmt(total)}`:'Merhaba, AURA parfüm hakkında bilgi almak istiyorum.';$('#checkout').href='https://wa.me/905365701917?text='+encodeURIComponent(msg)}
-    $$('[data-add]').forEach(b=>b.onclick=()=>{cart.push({name:b.dataset.add,size:b.dataset.size||selected.size,price:+(b.dataset.price||selected.price)});renderCart();openCart()});renderCart();
-    const panel=$('#mobilePanel');$('#menuOpen').onclick=()=>panel.classList.add('open');$('#menuClose').onclick=()=>panel.classList.remove('open');$$('#mobilePanel a').forEach(a=>a.onclick=()=>panel.classList.remove('open'));
-  })();
+(()=>{'use strict';const $=(selector,root=document)=>root.querySelector(selector);const $$=(selector,root=document)=>[...root.querySelectorAll(selector)];const fixes=document.createElement('style');fixes.textContent=`
+    .light-copy{padding:clamp(26px,4vw,48px);border:1px solid rgba(255,255,255,.18);background:linear-gradient(135deg,rgba(8,7,6,.72),rgba(8,7,6,.28));backdrop-filter:blur(14px);color:#fff}
+    .light-copy p{color:rgba(255,255,255,.74)}
+    .light-copy .outline-btn{color:#fff}
+    .purchase-chapter{color:#111}
+    @media(max-width:760px){
+      :root{--hh:68px}
+      .cinematic{height:440svh!important}
+      .chapter{height:88svh!important;min-height:88svh!important;padding:calc(var(--hh) + 16px) 15px 18px!important}
+      .hero{align-items:flex-end!important;padding-bottom:24px!important}
+      .hero h1{font-size:clamp(4.8rem,23vw,6.8rem)!important;line-height:.76!important}
+      .eyebrow{font-size:.52rem!important;letter-spacing:.23em!important;margin-bottom:10px!important}
+      .hero-sub{font-size:.55rem!important;letter-spacing:.18em!important;margin-top:20px!important;white-space:nowrap}
+      .scroll-cue{margin-top:20px!important;font-size:.49rem!important}
+      .right,.left{align-items:flex-end!important;justify-content:center!important}
+      .glass{width:100%!important;max-width:620px!important;padding:21px!important;margin:0!important;background:linear-gradient(135deg,rgba(8,7,6,.84),rgba(8,7,6,.54))!important;backdrop-filter:blur(12px)!important}
+      .glass h2,.light-copy h2{font-size:2.75rem!important;line-height:.9!important}
+      .glass p,.light-copy p{margin-top:15px!important;font-size:.77rem!important;line-height:1.62!important}
+      .kicker{font-size:.51rem!important;margin-bottom:12px!important}
+      .split{align-items:flex-end!important;justify-content:center!important;gap:0!important}
+      .note-col{width:50%!important;padding:18px 14px!important;background:linear-gradient(135deg,rgba(8,7,6,.84),rgba(8,7,6,.54))!important;border:1px solid rgba(255,255,255,.16)!important;text-align:left!important;backdrop-filter:blur(12px)}
+      .note-col:last-child{border-left:0!important}
+      .note-col .kicker{min-height:28px}
+      .note-list{gap:8px!important}
+      .note b{font-size:1.55rem!important}
+      .note small{font-size:.47rem!important}
+      .light-chapter{align-items:flex-end!important;justify-content:center!important;color:#fff!important}
+      .light-copy{width:100%!important;max-width:620px!important;margin:0!important;padding:21px!important;text-align:left!important;background:linear-gradient(135deg,rgba(8,7,6,.84),rgba(8,7,6,.54))!important}
+      .light-copy p{margin-left:0!important}
+      .purchase-chapter{align-items:flex-end!important;justify-content:center!important;padding-bottom:18px!important;color:#111!important}
+      .mini-buy{width:100%!important;max-width:620px!important;padding:20px!important;margin:0!important;background:rgba(247,244,238,.95)!important}
+      .mini-buy h3{font-size:2.15rem!important}
+      .mini-buy .kicker{color:#86683e!important}
+      .sizes{margin:16px 0!important}
+      .size{flex:1;padding:12px!important}
+      .content{border-radius:22px 22px 0 0!important;padding:82px 22px!important}
+      .section-head{display:block!important;margin-bottom:45px!important}
+      .section-head h2{font-size:3.35rem!important;line-height:.88!important;margin-top:12px!important}
+      .section-head p{font-size:.88rem!important;line-height:1.72!important;margin-top:24px!important}
+      .pyramid{display:block!important;margin-bottom:82px!important}
+      .pyr{padding:30px 12px!important;border-right:0!important;border-bottom:1px solid #cfc9bf!important}
+      .pyr:last-child{border-bottom:0!important}
+      .pyr h3{font-size:2.05rem!important}
+      .collections{grid-template-columns:1fr!important;gap:18px!important}
+      .thumb{aspect-ratio:16/11!important}
+      .contact{grid-template-columns:1fr!important;gap:30px!important;margin-top:80px!important;padding-top:55px!important}
+      .contact h2{font-size:3.15rem!important}
+      footer{display:block!important;padding:44px 22px!important}
+      footer .big{font-size:4.5rem!important}
+      footer small{display:block;margin-top:22px}
+      .progress{right:7px!important;height:88px!important}
+      .wa{right:18px!important;bottom:18px!important}
+    }
+  `;document.head.appendChild(fixes);const canvas=$('#sequence');const context=canvas.getContext('2d',{alpha:false,desynchronized:true});const cinematic=$('.cinematic');const stage=$('#stage');const shade=$('#shade');const progressLine=$('#progress');const header=$('#header');const loader=$('#loader');const FRAME_COUNT=12;const COLS=4;const ROWS=3;const FRAME_WIDTH=360;const FRAME_HEIGHT=203;let sprite=null;let ready=false;let targetFrame=0;let currentFrame=0;let lastRendered=-10;const clamp=(value,min,max)=>Math.min(max,Math.max(min,

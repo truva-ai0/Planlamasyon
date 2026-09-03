@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090806">
+  <meta name="description" content="AURA Odunsu Seri — scroll ile keşfedilen sinematik parfüm deneyimi.">
+  <title>AURA — Odunsu Seri</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <div class="loader" id="loader"><div class="load-inner"><div class="load-logo">AURA</div><div class="load-line"><i></i></div></div></div>
+  <header class="header" id="header">
+    <a class="logo" href="#top">AURA</a>
+    <nav class="nav"><a href="#hikaye">Hikâye</a><a href="#notalar">Notalar</a><a href="#koleksiyon">Koleksiyon</a><a href="#iletisim">İletişim</a></nav>
+    <div class="head-actions"><a class="circle" href="tel:+905365701917" aria-label="Telefon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 3.5 4.8 5.9c-.7.7-.6 2.2.2 3.9 1.5 3.2 5 6.7 8.2 8.2 1.7.8 3.2.9 3.9.2l2.4-2.4-4-2-1.5 1.5c-2.2-1-4.3-3.1-5.3-5.3l1.5-1.5-2-4Z"/></svg></a><button class="cart-btn" data-open-cart>Sepet (<span data-count>0</span>)</button><button class="menu-btn" id="menuOpen" aria-label="Menü">☰</button></div>
+  </header>
+  <div class="progress"><i id="progress"></i></div>
+  <main>
+    <section class="cinematic" id="top">
+      <div class="stage" id="stage"><canvas id="sequence" aria-label="AURA parfüm scroll animasyonu"></canvas><div class="shade" id="shade"></div><div class="grain"></div></div>
+      <div class="chapters">
+        <article class="chapter hero"><div class="copy reveal show"><p class="eyebrow">Eau de Parfum · Odunsu Seri</p><h1>AURA</h1><p class="hero-sub">Varlığınızı hissettiren bir imza</p><div class="scroll-cue">Keşfetmek için kaydır<i></i></div></div></article>
+        <article class="chapter right" id="hikaye"><div class="glass reveal"><div class="kicker">01 · Karakter</div><h2>Gücün ilk dokunuşu.</h2><p>Amberin sıcaklığı, sedir ağacının karakteri ve okyanus ferahlığının beklenmedik dengesi. AURA, bulunduğunuz ortamda sessiz ama güçlü bir iz bırakır.</p></div></article>
+        <article class="chapter split" id="notalar"><div class="note-col reveal"><div class="kicker">02 · Açılış</div><div class="note-list"><div class="note"><b>Bergamot</b><small>Canlı</small></div><div class="note"><b>Okyanus</b><small>Ferah</small></div><div class="note"><b>Karabiber</b><small>Keskin</small></div></div></div><div class="note-col reveal"><div class="kicker">03 · Derinlik</div><div class="note-list"><div class="note"><b>Amber</b><small>Sıcak</small></div><div class="note"><b>Sedir</b><small>Güçlü</small></div><div class="note"><b>Misk</b><small>Kalıcı</small></div></div></div></article>
+        <article class="chapter light-chapter"><div class="light-copy reveal"><div class="kicker">04 · İmza</div><h2>Sessiz ama unutulmaz.</h2><p>Kalıcı, dengeli ve rafine. AURA’nın son dokunuşu teninizde kalırken arkanızda kendine güvenen bir iz bırakır.</p><a class="outline-btn" href="#koleksiyon">Seriyi incele →</a></div></article>
+        <article class="chapter purchase-chapter light-chapter"><div class="mini-buy reveal"><div class="mini-buy-top"><div><div class="kicker">AURA Odunsu Seri</div><h3>İmza kokunuz.</h3></div><div class="price" id="mainPrice">₺1.490</div></div><div class="sizes"><button class="size active" data-size="50 ml" data-price="1490">50 ml</button><button class="size" data-size="100 ml" data-price="1990">100 ml</button></div><button class="add" data-add="AURA Odunsu Seri">Sepete Ekle</button></div></article>
+      </div>
+    </section>
+    <section class="content" id="koleksiyon">
+      <div class="section-head"><div><span class="cap">Koku mimarisi</span><h2>Her katmanda yeni bir karakter.</h2></div><p>İlk anda ferah, kalpte sıcak ve finalde derin. Teninizle bütünleşerek size özgü bir imzaya dönüşen dengeli bir kompozisyon.</p></div>
+      <div class="pyramid"><article class="pyr"><span>Üst notalar</span><h3>Ferah Açılış</h3><p>Bergamot, okyanus esintisi ve karabiber ile canlı, temiz ve dikkat çekici ilk temas.</p></article><article class="pyr"><span>Kalp notaları</span><h3>Sıcak Karakter</h3><p>Amber ve aromatik odunlar ile dengeli, modern ve özgüvenli bir merkez.</p></article><article class="pyr"><span>Dip notalar</span><h3>Kalıcı İmza</h3><p>Sedir ağacı, deri ve misk ile derin ve uzun süre hatırlanan rafine kapanış.</p></article></div>
+      <div class="section-head"><div><span class="cap">Diğer koleksiyonlar</span><h2>Her ruh hâline farklı bir AURA.</h2></div><p>Gündüzden geceye, enerjiden dinginliğe uzanan üç ayrı karakter. İmzanızı seçin.</p></div>
+      <div class="collections">
+        <article class="product"><canvas class="thumb" data-frame="0"></canvas><div class="prod-info"><div class="prod-row"><div><h3>Aura Classic</h3><p>Zamansız · Dengeli</p></div><strong>₺1.490</strong></div><button class="small-add" data-add="Aura Classic" data-price="1490" data-size="50 ml">Sepete Ekle</button></div></article>
+        <article class="product"><canvas class="thumb" data-frame="9"></canvas><div class="prod-info"><div class="prod-row"><div><h3>Aura Sport</h3><p>Dinamik · Ferah</p></div><strong>₺1.590</strong></div><button class="small-add" data-add="Aura Sport" data-price="1590" data-size="50 ml">Sepete Ekle</button></div></article>
+        <article class="product"><canvas class="thumb" data-frame="15"></canvas><div class="prod-info"><div class="prod-row"><div><h3>Aura Fever</h3><p>Sıcak · Yoğun</p></div><strong>₺1.690</strong></div><button class="small-add" data-add="Aura Fever" data-price="1690" data-size="50 ml">Sepete Ekle</button></div></article>
+      </div>
+      <section class="contact" id="iletisim"><h2>AURA’nızı seçmeye hazır mısınız?</h2><div class="contact-links"><a href="tel:+905365701917"><span>Telefon</span><b>0536 570 19 17 ↗</b></a><a href="https://wa.me/905365701917?text=Merhaba%2C%20AURA%20parf%C3%BCm%20hakk%C4%B1nda%20bilgi%20almak%20istiyorum." target="_blank" rel="noopener"><span>WhatsApp</span><b>Hemen yazın ↗</b></a><a href="https://www.google.com/maps/search/?api=1&query=%C3%87anakkale%2C%20T%C3%BCrkiye" target="_blank" rel="noopener"><span>Konum</span><b>Çanakkale ↗</b></a></div></section>
+    </section>
+  </main>
+  <footer><div class="big">AURA</div><small>© 2026 AURA · Odunsu Seri</small></footer>
+  <a class="wa" href="https://wa.me/905365701917?text=Merhaba%2C%20AURA%20parf%C3%BCm%20hakk%C4%B1nda%20bilgi%20almak%20istiyorum." target="_blank" rel="noopener" aria-label="WhatsApp"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.3L3.5 20l1.2-4.4a8.4 8.4 0 1 1 15.8-4Z"/><path d="M8.2 7.8c.4 3.5 2.5 5.6 6 6.4l1.3-1.6-2.2-1.1-.8.8c-1.2-.5-2.3-1.6-2.8-2.8l.8-.8-1.1-2.2-1.2 1.3Z"/></svg></a>
+  <div class="overlay" id="overlay"></div><aside class="drawer" id="drawer" aria-label="Sepet"><div class="drawer-head"><h2>Sepetiniz</h2><button class="close" id="closeCart">×</button></div><div class="cart-lines" id="cartLines"><p class="empty">Sepetiniz henüz boş.</p></div><div class="subtotal"><span>Ara toplam</span><strong id="subtotal">₺0</strong></div><a class="checkout" id="checkout" href="https://wa.me/905365701917" target="_blank" rel="noopener">WhatsApp ile Sipariş Ver</a></aside>
+  <div class="mobile-panel" id="mobilePanel"><button class="panel-close" id="menuClose">×</button><nav><a href="#hikaye">Hikâye</a><a href="#notalar">Notalar</a><a href="#koleksiyon">Koleksiyon</a><a href="#iletisim">İletişim</a></nav></div>
+  <script src="./assets/sprite-00.js"></script>
+  <script src="./assets/sprite-01.js"></script>
+  <script src="./assets/sprite-02.js"></script>
+  <script src="./assets/sprite-03.js"></script>
+  <script src="./assets/sprite-04.js"></script>
+  <script src="./assets/sprite-05.js"></script>
+  <script src="./assets/sprite-06.js"></script>
+  <script src="./assets/sprite-07.js"></script>
+  <script src="./assets/sprite-08.js"></script>
+  <script src="./assets/sprite-09.js"></script>
+  <script src="./assets/sprite-10.js"></script>
+  <script src="./assets/sprite-11.js"></script>
+  <script src="./assets/sprite-12.js"></script>
+  <script src="./assets/sprite-13.js"></script>
+  <script src="./assets/sprite-14.js"></script>
+  <script src="./assets/sprite-final.js"></script>
+  <script src="./assets/app.js"></script>
+</body></html>
